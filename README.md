@@ -1,39 +1,29 @@
-# rmdlconv
-copyright (c) 2022, rexx
+# rmdlconv ( R5Flowstate/S21 )
 
-## instructions
-1. drag and drop .mdl file on rmdlconv.exe
+Converts Source / Respawn studio models between versions. This fork emits
+**mdl_ v17** for the Season 21 client and **v10 / v54** for the S3 dedicated
+server.
 
-OR
+Agents view included: CLAUDE.md
 
-1. make a batch file with one or more of the supported commands.
-2. run the batch file.
+## Usage
 
----
-### supported versions
-main versions:
-- Portal 2 (v49) -> Apex Legends Season 3 (v54 - rmdl v10)
-- Titanfall 2 (v53) -> Apex Legends Season 3 (v54 - rmdl v10)
+```
+rmdlconv -convertmodel <file> [-targetversion <17|54|10>] [-outputdir <dir>]
+rmdlconv <-v8|-v122|-v49|-v191|-v17> <srcDir> <outDir> [-targetversion 17]
+```
 
-partially supported:
-- Titanfall (v52) -> Titanfall 2 (v53)
+```
+# S21 client (mdl_ v17)
+rmdlconv -v122 <src> <out> -targetversion 17
 
-unsupported but planned:
-- Portal 2 (v49) -> Titanfall 2 (v53)
-- Titanfall (v52) -> Apex Legends Season 3 (v54 - rmdl v10)
+# S3 dedi (v10 + phy + collision)
+rmdlconv -v17 <src> <out>
 
+# v19.1 -> v17 compact
+rmdlconv -v191 <src> <out> -targetversion 17
+```
 
-### supported commands
-- "-nopause": automatically close console after running
-- "-convertmodel": path to model(s) you wish to convert
-  examples: "-convertmodel C:\Among\us.mdl" "-convertmodel C:\Among"
-- "-targetversion": version you would like models to be upgraded to
-  examples: "-targetversion 53" "-targetversion 54"
-- "-outputdir": custom directory for files to be output into
-  examples: "-outputdir E:\SuS"
-- "-convertsequence": unfinished
+Folder flags take a directory; `-convertmodel` takes one file.
 
-### known issues
-animation conversion is not currently supported and there may be various issues when using models in game
-
-converted models will almost definitely **not work** in R5Reloaded if they only contain 1 bone, as the game deals with them differently
+Upstream: [r-ex/rmdlconv](https://github.com/r-ex/rmdlconv)

@@ -92,3 +92,10 @@ void VectorITransform(const float* in1, const matrix3x4_t& in2, float* out);
 
 void MatrixInvert(const matrix3x4_t& in, matrix3x4_t& out);
 void AngleMatrix(const QAngle& angles, matrix3x4_t& matrix);
+
+// https://github.com/ValveSoftware/source-sdk-2013/blob/master/sp/src/mathlib/mathlib_base.cpp#L285
+// Concatenate two 3x4 matrices: out = in1 × in2
+void ConcatTransforms(const matrix3x4_t& in1, const matrix3x4_t& in2, matrix3x4_t& out);
+
+// Set matrix to identity
+void SetIdentityMatrix(matrix3x4_t& matrix);

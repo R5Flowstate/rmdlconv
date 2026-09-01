@@ -22,11 +22,19 @@ void ConvertSurfaceProperties(const char* const pOldBVHData, char* const pNewBVH
 	const r5::v8::dsurfaceproperty_t* const pOldSurfProps = reinterpret_cast<const r5::v8::dsurfaceproperty_t*>(&pOldBVHData[pOldCollModel->surfacePropsIndex]);
 	r5::v8::dsurfaceproperty_t* const pNewSurfProps = reinterpret_cast<r5::v8::dsurfaceproperty_t*>(&pNewBVHData[pNewCollModel->surfacePropsIndex]);
 
+	// Calculate the actual number of dsurfaceproperty_t entries from the array size.
+	// This is different from oldHeader.surfacePropCount which is the count of entries
+	// in the dsurfacepropertydata_t array. We need to iterate over ALL dsurfaceproperty_t
+	// entries to properly convert their surfacePropId from an index into dsurfacepropertydata_t
+	// to the actual surface property ID. Failing to convert all entries causes climbing/grappling
+	// surface properties to break on converted models.
+	const int actualSurfacePropCount = (pOldCollModel->contentMasksIndex - pOldCollModel->surfacePropsIndex) / sizeof(r5::v8::dsurfaceproperty_t);
+
 	// Newer models have an array of surface properties, so the size is actually
 	// surfacePropArrayCount * surfacePropCount, however V10 models can only store
 	// 1 array of them so we just take the first one. The new system also stores
 	// 2 surface properties per entry, from here we just take the first one.
-	for (int i = 0; i < oldHeader.surfacePropCount; i++)
+	for (int i = 0; i < actualSurfacePropCount; i++)
 	{
 		const static bool useSecondProp = false;
 
@@ -65,7 +73,8 @@ static void CopyCollisionBuffers(r5::v8::mstudiocollmodel_t* const newCollModel,
 	g_model.pData += surfaceNamesSize;
 }
 
-void ConvertCollisionData_V120(const r5::v121::studiohdr_t* const oldStudioHdr, const char* const pOldBVHData)
+template <typename T>
+void ConvertCollisionData_V120(const T* const oldStudioHdr, const char* const pOldBVHData)
 {
 	g_model.hdrV54()->bvhOffset = g_model.pData - g_model.pBase;
 
@@ -135,7 +144,7 @@ void ConvertCollisionData_V120(const r5::v121::studiohdr_t* const oldStudioHdr, 
 
 	// We need to do a second pass here, as vertices and leafs are written
 	// contiguously after another for all collision models. All nodes for
-	// each collision model are written contiguously after another after 
+	// each collision model are written contiguously after another after
 	// all the vertices and leafs.
 	for (int i = 0; i < headerCount; ++i)
 	{
@@ -146,15 +155,37 @@ void ConvertCollisionData_V120(const r5::v121::studiohdr_t* const oldStudioHdr, 
 		__int64 nodeSize;
 
 		if (i != headerCount - 1) // if not the last header
+		{
 			nodeSize = pOldCollHeaders[i + 1].bvhNodeIndex - oldHeader->bvhNodeIndex;
+		}
 		else
-			nodeSize = offsetof(r5::v140::studiohdr_t, vgLODOffset) + oldStudioHdr->vgLODOffset - (oldStudioHdr->bvhOffset + oldHeader->bvhNodeIndex);
+		{
+			// Calculate absolute offsets for validation
+			const size_t vgDataAbsoluteOffset = offsetof(r5::v140::studiohdr_t, vgLODOffset) + oldStudioHdr->vgLODOffset;
+			const size_t nodeAbsoluteOffset = oldStudioHdr->bvhOffset + oldHeader->bvhNodeIndex;
+
+			// Buffer boundary validation - ensure VG data comes after node data
+			if (vgDataAbsoluteOffset <= nodeAbsoluteOffset)
+			{
+				printf("ERROR: collision node data exceeds available buffer (vgOffset: 0x%zX <= nodeOffset: 0x%zX)\n",
+					vgDataAbsoluteOffset, nodeAbsoluteOffset);
+				nodeSize = 0;
+			}
+			else
+			{
+				nodeSize = vgDataAbsoluteOffset - nodeAbsoluteOffset;
+			}
+		}
 
 		const void* nodeData = reinterpret_cast<const char*>(pOldCollModel) + oldHeader->bvhNodeIndex;
 		ALIGN64(g_model.pData);
 		newHeader->bvhNodeIndex = g_model.pData - reinterpret_cast<char*>(pNewCollModel);
-		memcpy_s(g_model.pData, nodeSize, nodeData, nodeSize);
-		g_model.pData += nodeSize;
+
+		if (nodeSize > 0)
+		{
+			memcpy_s(g_model.pData, nodeSize, nodeData, nodeSize);
+			g_model.pData += nodeSize;
+		}
 	}
 }
 
@@ -211,3 +242,10 @@ void CopyAnimRefData(const char* const pOldAnimRefData, char* const pNewAnimRefD
 		newSeqDesc++;
 	}
 }
+
+// Explicit template instantiations for ConvertCollisionData_V120
+template void ConvertCollisionData_V120<r5::v121::studiohdr_t>(const r5::v121::studiohdr_t* const, const char* const);
+template void ConvertCollisionData_V120<r5::v122::studiohdr_t>(const r5::v122::studiohdr_t* const, const char* const);
+template void ConvertCollisionData_V120<r5::v124::studiohdr_t>(const r5::v124::studiohdr_t* const, const char* const);
+template void ConvertCollisionData_V120<r5::v125::studiohdr_t>(const r5::v125::studiohdr_t* const, const char* const);
+template void ConvertCollisionData_V120<r5::v140::studiohdr_t>(const r5::v140::studiohdr_t* const, const char* const);

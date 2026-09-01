@@ -209,7 +209,7 @@ namespace r5
 				}
 			}
 
-			// disassembly is flipped
+			// the compare order below is intentional
 			assert(angle1.IsValid() && angle2.IsValid());
 			if (angle1.x != angle2.x || angle1.y != angle2.y || angle1.z != angle2.z)
 			{

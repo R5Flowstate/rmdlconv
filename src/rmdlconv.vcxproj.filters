@@ -39,6 +39,12 @@
     <ClCompile Include="studio\model\rmdl_121.cpp">
       <Filter>studio\model</Filter>
     </ClCompile>
+    <ClCompile Include="studio\model\rmdl_122_v17.cpp">
+      <Filter>studio\model</Filter>
+    </ClCompile>
+    <ClCompile Include="studio\model\rmdl_8_v17.cpp">
+      <Filter>studio\model</Filter>
+    </ClCompile>
     <ClCompile Include="core\math\color32.cpp">
       <Filter>core\math</Filter>
     </ClCompile>
@@ -59,6 +65,12 @@
     </ClCompile>
     <ClCompile Include="studio\model\rmdl_120.cpp">
       <Filter>studio\model</Filter>
+    </ClCompile>
+    <ClCompile Include="collision\bvh4_builder.cpp">
+      <Filter>collision</Filter>
+    </ClCompile>
+    <ClCompile Include="collision\collision_generator.cpp">
+      <Filter>collision</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -114,6 +126,18 @@
     <ClInclude Include="core\math\vector4d.h">
       <Filter>core\math</Filter>
     </ClInclude>
+    <ClInclude Include="collision\bvh4_types.h">
+      <Filter>collision</Filter>
+    </ClInclude>
+    <ClInclude Include="collision\bvh4_builder.h">
+      <Filter>collision</Filter>
+    </ClInclude>
+    <ClInclude Include="collision\collision_generator.h">
+      <Filter>collision</Filter>
+    </ClInclude>
+    <ClInclude Include="collision\collision_integration.h">
+      <Filter>collision</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="core">
@@ -130,6 +154,9 @@
     </Filter>
     <Filter Include="core\math">
       <UniqueIdentifier>{07acf1e8-b495-41b6-8c8c-4af694aace35}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="collision">
+      <UniqueIdentifier>{b2e3c7a1-4d9f-4e6b-8c2a-1f5d3e9b7c4a}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
 </Project>

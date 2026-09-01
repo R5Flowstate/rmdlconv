@@ -4,6 +4,8 @@
 #include <pch.h>
 #include <studio/studio.h>
 #include <studio/versions.h>
+#include <collision/collision_generator.h>
+#include <collision/collision_smd.h>
 
 //
 // ConvertStudioHdr
@@ -36,6 +38,13 @@ void ConvertStudioHdr(r5::v8::studiohdr_t* out, studiohdr_t* hdr)
 
 	// these will probably have to be modified at some point
 	out->flags = hdr->flags;
+
+	// TEMPORARY FIX: Force critical flags for large static models
+	// Without these flags, large models glitch due to forced fade-out and wrong rendering path
+	// STUDIOHDR_FLAGS_STATIC_PROP (0x10) - Use static prop rendering (RGDP shader)
+	// STUDIOHDR_FLAGS_NO_FORCED_FADE (0x800) - Prevent distance-based fade-out
+	out->flags |= 0x10;   // STATIC_PROP
+	out->flags |= 0x800;  // NO_FORCED_FADE
 
 	//-| begin count vars
 	out->numbones = hdr->numbones;
@@ -443,8 +452,8 @@ void ConvertTextures_49(mstudiotexturedir_t* pCDTextures, int numCDTextures, mst
 		const char* textureName = STRING_FROM_IDX(oldTexture, oldTexture->sznameindex);
 		AddToStringTable((char*)newTexture, &newTexture->sznameindex, textureName);
 
-		std::string texName = "material/" + std::string(textureName) + ".rpak";
-		newTexture->textureGuid = HashString(texName.c_str());
+		// TEMP: Set material GUID to 0 for v49 converted models
+		newTexture->textureGuid = 0;
 
 		g_model.pData += sizeof(r5::v8::mstudiotexture_t);
 	}
@@ -609,7 +618,7 @@ void ConvertMDL49To54(char* pMDL, const std::string& pathIn, const std::string& 
 	std::ofstream out(rmdlPath, std::ios::out | std::ios::binary);
 
 	// allocate temp file buffer
-	g_model.pBase = new char[FILEBUFSIZE]{};
+	g_model.pBase = AllocModelBuf(FILEBUFSIZE);
 	g_model.pData = g_model.pBase;
 
 	// convert mdl hdr
@@ -706,6 +715,247 @@ void ConvertMDL49To54(char* pMDL, const std::string& pathIn, const std::string& 
 	g_model.pData = WriteStringTable(g_model.pData);
 	ALIGN4(g_model.pData);
 
+	// Generate BVH4 collision from mesh data
+	// First check for a custom collision SMD file, otherwise auto-generate from visual mesh
+	{
+		printf("generating collision...\n");
+
+		collision::GenerationResult collResult;
+		bool collisionGenerated = false;
+
+		// Check for collision SMD file (e.g., modelname_phys.smd, modelname_collision.smd)
+		std::string collisionSmdPath = collision::FindCollisionSMD(pathIn);
+		if (!collisionSmdPath.empty())
+		{
+			printf("  found collision SMD: %s\n", collisionSmdPath.c_str());
+
+			collision::SMDLoadResult smdResult = collision::LoadCollisionSMD(collisionSmdPath);
+			if (smdResult.success)
+			{
+				// Generate collision from SMD mesh
+				collision::CollisionGenerator generator;
+				collision::GeneratorConfig collConfig;
+				collConfig.maxTrianglesPerLeaf = 4;
+				collConfig.defaultSurfaceProp = "default";
+				generator.SetConfig(collConfig);
+
+				collResult = generator.Generate(smdResult.mesh);
+				collisionGenerated = collResult.success;
+
+				if (!collisionGenerated)
+				{
+					printf("  failed to generate collision from SMD: %s\n", collResult.errorMessage.c_str());
+					printf("  falling back to visual mesh collision...\n");
+				}
+			}
+			else
+			{
+				printf("  failed to load collision SMD: %s\n", smdResult.errorMessage.c_str());
+				printf("  falling back to visual mesh collision...\n");
+			}
+		}
+
+		// Fallback: generate collision from visual mesh (VTX/VVD)
+		if (!collisionGenerated)
+		{
+			// Read VVD header to get vertex data
+			vvd::vertexFileHeader_t* vvdHeader = reinterpret_cast<vvd::vertexFileHeader_t*>(vvdBuf.get());
+
+			// Get vertex positions from VVD
+			std::vector<float> vertices;
+			std::vector<uint32_t> indices;
+
+			// Get vertices from VVD file
+			vvd::mstudiovertex_t* vvdVerts = reinterpret_cast<vvd::mstudiovertex_t*>(vvdBuf.get() + vvdHeader->vertexDataStart);
+			int numVerts = vvdHeader->numLODVertexes[0]; // Use LOD0
+
+			vertices.reserve(numVerts * 3);
+			for (int i = 0; i < numVerts; i++)
+			{
+				vertices.push_back(vvdVerts[i].m_vecPosition.x);
+				vertices.push_back(vvdVerts[i].m_vecPosition.y);
+				vertices.push_back(vvdVerts[i].m_vecPosition.z);
+			}
+
+			// Get indices from VTX file, using MDL mesh structure to get vertex offsets
+			// VTX origMeshVertID is relative to the mesh, we need to add the mesh's
+			// vertexoffset to get the correct global VVD index
+			OptimizedModel::FileHeader_t* vtxHeader = reinterpret_cast<OptimizedModel::FileHeader_t*>(vtxBuf.get());
+			OptimizedModel::BodyPartHeader_t* bodyParts = reinterpret_cast<OptimizedModel::BodyPartHeader_t*>(vtxBuf.get() + vtxHeader->bodyPartOffset);
+
+			// Track cumulative model vertex base across all models
+			int modelVertexBase = 0;
+
+			// Get MDL bodyparts array for accessing mesh vertex offsets
+			mstudiobodyparts_t* mdlBodyparts = reinterpret_cast<mstudiobodyparts_t*>((char*)oldHeader + oldHeader->bodypartindex);
+
+			for (int bp = 0; bp < vtxHeader->numBodyParts; bp++)
+			{
+				OptimizedModel::BodyPartHeader_t* bodyPart = &bodyParts[bp];
+				OptimizedModel::ModelHeader_t* vtxModels = reinterpret_cast<OptimizedModel::ModelHeader_t*>((char*)bodyPart + bodyPart->modelOffset);
+
+				// Get corresponding MDL bodypart to access mesh vertex offsets
+				mstudiobodyparts_t* mdlBodypart = &mdlBodyparts[bp];
+				mstudiomodel_t* mdlModels = reinterpret_cast<mstudiomodel_t*>((char*)mdlBodypart + mdlBodypart->modelindex);
+
+				for (int m = 0; m < bodyPart->numModels; m++)
+				{
+					OptimizedModel::ModelHeader_t* vtxModel = &vtxModels[m];
+					OptimizedModel::ModelLODHeader_t* lods = reinterpret_cast<OptimizedModel::ModelLODHeader_t*>((char*)vtxModel + vtxModel->lodOffset);
+
+					// Get corresponding MDL model
+					mstudiomodel_t* mdlModel = &mdlModels[m];
+
+					// Only use LOD0
+					OptimizedModel::ModelLODHeader_t* lod = &lods[0];
+					OptimizedModel::MeshHeader_t* vtxMeshes = reinterpret_cast<OptimizedModel::MeshHeader_t*>((char*)lod + lod->meshOffset);
+
+					// Get MDL meshes for this model
+					mstudiomesh_t* mdlMeshes = reinterpret_cast<mstudiomesh_t*>((char*)mdlModel + mdlModel->meshindex);
+
+					for (int me = 0; me < lod->numMeshes; me++)
+					{
+						OptimizedModel::MeshHeader_t* vtxMesh = &vtxMeshes[me];
+						OptimizedModel::StripGroupHeader_t* stripGroups = reinterpret_cast<OptimizedModel::StripGroupHeader_t*>((char*)vtxMesh + vtxMesh->stripGroupHeaderOffset);
+
+						// Get the mesh's vertex offset from MDL
+						// globalVertIdx = modelVertexBase + mesh->vertexoffset + origMeshVertID
+						mstudiomesh_t* mdlMesh = &mdlMeshes[me];
+						int meshVertexBase = modelVertexBase + mdlMesh->vertexoffset;
+
+						for (int sg = 0; sg < vtxMesh->numStripGroups; sg++)
+						{
+							OptimizedModel::StripGroupHeader_t* stripGroup = &stripGroups[sg];
+							OptimizedModel::Vertex_t* vtxVerts = reinterpret_cast<OptimizedModel::Vertex_t*>((char*)stripGroup + stripGroup->vertOffset);
+							uint16_t* vtxIndices = reinterpret_cast<uint16_t*>((char*)stripGroup + stripGroup->indexOffset);
+							OptimizedModel::StripHeader_t* strips = reinterpret_cast<OptimizedModel::StripHeader_t*>((char*)stripGroup + stripGroup->stripOffset);
+
+							for (int s = 0; s < stripGroup->numStrips; s++)
+							{
+								OptimizedModel::StripHeader_t* strip = &strips[s];
+
+								// Check strip type - STRIP_IS_TRILIST = 0x01
+								if (strip->flags & OptimizedModel::STRIP_IS_TRILIST)
+								{
+									// Triangle list: read triplets sequentially
+									for (int i = 0; i < strip->numIndices; i += 3)
+									{
+										int idx0 = vtxIndices[strip->indexOffset + i];
+										int idx1 = vtxIndices[strip->indexOffset + i + 1];
+										int idx2 = vtxIndices[strip->indexOffset + i + 2];
+
+										// Add mesh vertex base to get correct global VVD index
+										indices.push_back(meshVertexBase + vtxVerts[idx0].origMeshVertID);
+										indices.push_back(meshVertexBase + vtxVerts[idx1].origMeshVertID);
+										indices.push_back(meshVertexBase + vtxVerts[idx2].origMeshVertID);
+									}
+								}
+								else
+								{
+									// Triangle strip: each new index forms a triangle with previous two
+									for (int i = 0; i < strip->numIndices - 2; i++)
+									{
+										int idx0 = vtxIndices[strip->indexOffset + i];
+										int idx1 = vtxIndices[strip->indexOffset + i + 1];
+										int idx2 = vtxIndices[strip->indexOffset + i + 2];
+
+										// Alternate winding order for triangle strips
+										if (i & 1)
+										{
+											std::swap(idx1, idx2);
+										}
+
+										// Skip degenerate triangles (used for strip stitching)
+										if (idx0 == idx1 || idx1 == idx2 || idx0 == idx2)
+											continue;
+
+										// Add mesh vertex base to get correct global VVD index
+										indices.push_back(meshVertexBase + vtxVerts[idx0].origMeshVertID);
+										indices.push_back(meshVertexBase + vtxVerts[idx1].origMeshVertID);
+										indices.push_back(meshVertexBase + vtxVerts[idx2].origMeshVertID);
+									}
+								}
+							}
+						}
+					}
+
+					// Move to next model's vertex range
+					modelVertexBase += mdlModel->numvertices;
+				}
+			}
+
+			if (!vertices.empty() && !indices.empty())
+			{
+				uint32_t numVerts = static_cast<uint32_t>(vertices.size() / 3);
+				uint32_t numTris = static_cast<uint32_t>(indices.size() / 3);
+
+				// Debug: print collision input stats
+				printf("  collision input: %u vertices, %u triangles\n", numVerts, numTris);
+
+				// Validate and debug indices
+				uint32_t maxIdx = 0;
+				uint32_t minIdx = 0xFFFFFFFF;
+				bool hasInvalidIdx = false;
+				for (size_t i = 0; i < indices.size(); i++)
+				{
+					if (indices[i] >= numVerts)
+					{
+						if (!hasInvalidIdx)
+						{
+							printf("  ERROR: triangle index %u at position %zu is out of bounds (max=%u)\n",
+								indices[i], i, numVerts - 1);
+						}
+						hasInvalidIdx = true;
+					}
+					if (indices[i] > maxIdx) maxIdx = indices[i];
+					if (indices[i] < minIdx) minIdx = indices[i];
+				}
+				printf("  index range: %u to %u\n", minIdx, maxIdx);
+
+				// Debug: print first few triangles
+				printf("  first 4 triangles:\n");
+				size_t numTrisToPrint = indices.size() / 3;
+				if (numTrisToPrint > 4) numTrisToPrint = 4;
+				for (size_t t = 0; t < numTrisToPrint; t++)
+				{
+					printf("    tri %zu: [%u, %u, %u]\n", t,
+						indices[t * 3], indices[t * 3 + 1], indices[t * 3 + 2]);
+				}
+
+				collResult = collision::QuickGenerate(
+					vertices.data(),
+					numVerts,
+					indices.data(),
+					numTris
+				);
+
+				collisionGenerated = collResult.success;
+			}
+			else
+			{
+				printf("  no mesh data available for collision\n");
+			}
+		}
+
+		// Write collision data if generated successfully
+		if (collisionGenerated && !collResult.collisionData.empty())
+		{
+			ALIGN16(g_model.pData);
+			pHdr->bvhOffset = g_model.pData - g_model.pBase;
+			memcpy(g_model.pData, collResult.collisionData.data(), collResult.collisionData.size());
+			g_model.pData += collResult.collisionData.size();
+
+			printf("  generated BVH4 collision: %u nodes, %u triangles\n",
+				collResult.nodeCount, collResult.triangleCount);
+		}
+		else if (!collisionGenerated)
+		{
+			printf("  failed to generate collision: %s\n", collResult.errorMessage.c_str());
+		}
+	}
+
+	ALIGN4(g_model.pData);
+
 	pHdr->length = g_model.pData - g_model.pBase;
 
 	out.write(g_model.pBase, pHdr->length);
@@ -714,7 +964,7 @@ void ConvertMDL49To54(char* pMDL, const std::string& pathIn, const std::string& 
 	CreateVGFile(ChangeExtension(pathOut, "vg"), pHdr, vtxBuf.get(), vvdBuf.get(), nullptr, nullptr);
 
 	// now delete rmdl buffer so we can write the rig
-	delete[] g_model.pBase;
+	FreeModelBuf(g_model.pBase);
 
 	///////////////
 	// ANIM RIGS //
@@ -736,7 +986,7 @@ void ConvertMDL49To54(char* pMDL, const std::string& pathIn, const std::string& 
 	std::string rrigPath = ChangeExtension(filePath, "rrig");
 	std::ofstream rigOut(rrigPath, std::ios::out | std::ios::binary);
 
-	g_model.pBase = new char[FILEBUFSIZE] {};
+	g_model.pBase = AllocModelBuf(FILEBUFSIZE);
 	g_model.pData = g_model.pBase;
 
 	// generate rig
@@ -788,7 +1038,7 @@ void ConvertMDL49To54(char* pMDL, const std::string& pathIn, const std::string& 
 
 	rigOut.write(g_model.pBase, pHdr->length);
 
-	delete[] g_model.pBase;
+	FreeModelBuf(g_model.pBase);
 
 	*/
 	g_model.stringTable.clear(); // cleanup string table

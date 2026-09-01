@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <iostream>
 #include <map>
+#include <set>
+#include <vector>
 #include <cstdarg>
 #include <cassert>
 #include <cstdlib>

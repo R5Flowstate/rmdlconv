@@ -394,6 +394,72 @@ namespace vg
 			__int64 unk2;
 		};
 	}
+
+	// v16+ (seasons 15+) - raw decompressed VG format without '0tVG' magic
+	// Used by v19.1 models
+	namespace rev4
+	{
+		struct MeshHeader_t
+		{
+			uint64_t flags;
+
+			uint32_t vertCount;				// number of vertices
+			uint16_t vertCacheSize;			// number of bytes used from the vertex buffer
+			uint16_t vertBoneCount;			// how many bones are used by vertices in this mesh
+
+			uint32_t indexOffset;			// start offset for this mesh's indices (relative)
+			uint32_t indexCount : 28;		// number of indices
+			uint32_t indexType : 4;			// tri/quad type
+
+			uint32_t vertOffset;			// start offset for this mesh's vertices (relative)
+			uint32_t vertBufferSize;		// TOTAL size of vertex buffer
+
+			uint32_t extraBoneWeightOffset;	// start offset for extra bone weights (relative)
+			uint32_t extraBoneWeightSize;	// size of extra bone weights
+
+			uint32_t blendShapeVertOffset;
+			uint32_t blendShapeVertBufferSize;
+
+			// Helper functions for accessing data (offsets are relative to the field)
+			inline const uint16_t* pIndices() const {
+				return indexCount > 0 ? reinterpret_cast<const uint16_t*>((const char*)this + offsetof(MeshHeader_t, indexOffset) + indexOffset) : nullptr;
+			}
+			inline const char* pVertices() const {
+				return vertBufferSize > 0 ? (const char*)this + offsetof(MeshHeader_t, vertOffset) + vertOffset : nullptr;
+			}
+			inline const char* pBoneWeights() const {
+				return extraBoneWeightSize > 0 ? (const char*)this + offsetof(MeshHeader_t, extraBoneWeightOffset) + extraBoneWeightOffset : nullptr;
+			}
+		};
+
+		struct ModelLODHeader_t
+		{
+			uint8_t meshCount;		// number of meshes in this LOD
+			uint8_t meshIndex;		// starting mesh index
+			uint8_t lodLevel;		// LOD level this header represents
+			uint8_t groupIndex;		// vertex group index
+
+			uint32_t meshOffset;	// offset to mesh array (relative)
+
+			inline const MeshHeader_t* pMesh(uint8_t meshIdx) const {
+				return meshCount > 0 ? reinterpret_cast<const MeshHeader_t*>((const char*)this + offsetof(ModelLODHeader_t, meshOffset) + meshOffset) + meshIdx : nullptr;
+			}
+		};
+
+		struct VertexGroupHeader_t
+		{
+			uint8_t lodIndex;		// base LOD index
+			uint8_t lodCount;		// number of LODs in this group
+			uint8_t groupIndex;		// vertex group index
+			uint8_t lodMap;			// bit flags for which LODs are in this group
+
+			uint32_t lodOffset;		// offset to LOD array (relative)
+
+			inline const ModelLODHeader_t* pLod(uint8_t lodIdx) const {
+				return lodCount > 0 ? reinterpret_cast<const ModelLODHeader_t*>((const char*)this + offsetof(VertexGroupHeader_t, lodOffset) + lodOffset) + lodIdx : nullptr;
+			}
+		};
+	}
 }
 
 
@@ -1132,7 +1198,7 @@ namespace r1
 	{
 		short version; // game requires this to be 2 or else it errors
 
-		short unk; // may or may not exist, version gets casted as short in ida
+		short unk; // may or may not exist; the version field is read as a short
 
 		Vector bbmin;
 		Vector bbmax;
@@ -2037,7 +2103,7 @@ namespace r2
 	{
 		short version; // game requires this to be 2 or else it errors
 
-		short unk; // may or may not exist, version gets casted as short in ida
+		short unk; // may or may not exist; the version field is read as a short
 
 		Vector bbmin;
 		Vector bbmax;
@@ -4313,6 +4379,334 @@ namespace r5
 		};
 	}
 
+	// v12.3 is identical to v12.2 studiohdr_t (only animation format changed to rseq_v10)
+	// Use v122::studiohdr_t for v12.3 models
+
+	namespace v124
+	{
+		// v12.4 adds unk_20C[2] after vvwSize
+		struct studiohdr_t
+		{
+			int id; // Model format ID, such as "IDST" (0x49 0x44 0x53 0x54)
+			int version; // Format version number, such as 54 (0x36,0x00,0x00,0x00)
+			int checksum; // This has to be the same in the phy and vtx files to load!
+			int sznameindex; // This has been moved from studiohdr2 to the front of the main header.
+			char name[64]; // The internal name of the model, padding with null chars.
+			int length; // Data size of MDL file in chars.
+
+			Vector eyeposition;	// ideal eye position
+
+			Vector illumposition;	// illumination center
+
+			Vector hull_min;		// ideal movement hull size
+			Vector hull_max;
+
+			Vector view_bbmin;		// clipping bounding box
+			Vector view_bbmax;
+
+			int flags;
+
+			int numbones; // bones
+			int boneindex;
+
+			int numbonecontrollers; // bone controllers
+			int bonecontrollerindex;
+
+			int numhitboxsets;
+			int hitboxsetindex;
+
+			int numlocalanim; // animations/poses
+			int localanimindex; // animation descriptions
+
+			int numlocalseq; // sequences
+			int	localseqindex;
+
+			int activitylistversion;
+
+			int materialtypesindex;
+			int numtextures;
+			int textureindex;
+
+			int numcdtextures;
+			int cdtextureindex;
+
+			int numskinref;
+			int numskinfamilies;
+			int skinindex;
+
+			int numbodyparts;
+			int bodypartindex;
+
+			int numlocalattachments;
+			int localattachmentindex;
+
+			int numlocalnodes;
+			int localnodeindex;
+			int localnodenameindex;
+			int localNodeUnk;
+			int localNodeDataOffset;
+
+			int numikchains;
+			int ikchainindex;
+
+			int uiPanelCount;
+			int uiPanelOffset;
+
+			int numlocalposeparameters;
+			int localposeparamindex;
+
+			int surfacepropindex;
+
+			int keyvalueindex;
+			int keyvaluesize;
+
+			int numlocalikautoplaylocks;
+			int localikautoplaylockindex;
+
+			float mass;
+			int contents;
+
+			int numincludemodels;
+			int includemodelindex;
+
+			int virtualModel;
+
+			int bonetablebynameindex;
+
+			int vgMeshCount;
+			int vgMeshOffset;
+
+			int boneStateOffset;
+			int boneStateCount;
+
+			int unk_v12_1;
+
+			int hwDataSize;
+
+			short vgUnk;
+			short numVGLods;
+
+			int lodMap;
+
+			int groupHeaderOffset;
+			int groupHeaderCount;
+
+			int vgLODOffset;
+			int vgLODCount;
+
+			float defaultFadeDist;
+			float gatherSize;
+
+			float flVertAnimFixedPointScale;
+			int surfacepropLookup;
+
+			int unk_v12_2; // unk_194 in template
+
+			int sourceFilenameOffset;
+
+			int numsrcbonetransform;
+			int srcbonetransformindex;
+
+			int	illumpositionattachmentindex;
+
+			int linearboneindex;
+
+			int procBoneCount;
+			int procBoneOffset;
+			int linearProcBoneOffset;
+
+			int unkStringOffset;
+
+			int vtxOffset;
+			int vvdOffset;
+			int vvcOffset;
+			int phyOffset;
+
+			int vtxSize;
+			int vvdSize;
+			int vvcSize;
+			int phySize;
+
+			int boneFollowerCount;
+			int boneFollowerOffset;
+
+			Vector bvhMin;
+			Vector bvhMax;
+
+			int bvhOffset;
+
+			short bvhUnk[2];
+
+			int vvwOffset;
+			int vvwSize;
+
+			int unk_20C[2]; // added in v12.4
+		};
+	}
+
+	namespace v125
+	{
+		// v12.5 (also called v13) adds unk_214 after unk_20C
+		struct studiohdr_t
+		{
+			int id; // Model format ID, such as "IDST" (0x49 0x44 0x53 0x54)
+			int version; // Format version number, such as 54 (0x36,0x00,0x00,0x00)
+			int checksum; // This has to be the same in the phy and vtx files to load!
+			int sznameindex; // This has been moved from studiohdr2 to the front of the main header.
+			char name[64]; // The internal name of the model, padding with null chars.
+			int length; // Data size of MDL file in chars.
+
+			Vector eyeposition;	// ideal eye position
+
+			Vector illumposition;	// illumination center
+
+			Vector hull_min;		// ideal movement hull size
+			Vector hull_max;
+
+			Vector view_bbmin;		// clipping bounding box
+			Vector view_bbmax;
+
+			int flags;
+
+			int numbones; // bones
+			int boneindex;
+
+			int numbonecontrollers; // bone controllers
+			int bonecontrollerindex;
+
+			int numhitboxsets;
+			int hitboxsetindex;
+
+			int numlocalanim; // animations/poses
+			int localanimindex; // animation descriptions
+
+			int numlocalseq; // sequences
+			int	localseqindex;
+
+			int activitylistversion;
+
+			int materialtypesindex;
+			int numtextures;
+			int textureindex;
+
+			int numcdtextures;
+			int cdtextureindex;
+
+			int numskinref;
+			int numskinfamilies;
+			int skinindex;
+
+			int numbodyparts;
+			int bodypartindex;
+
+			int numlocalattachments;
+			int localattachmentindex;
+
+			int numlocalnodes;
+			int localnodeindex;
+			int localnodenameindex;
+			int localNodeUnk;
+			int localNodeDataOffset;
+
+			int numikchains;
+			int ikchainindex;
+
+			int uiPanelCount;
+			int uiPanelOffset;
+
+			int numlocalposeparameters;
+			int localposeparamindex;
+
+			int surfacepropindex;
+
+			int keyvalueindex;
+			int keyvaluesize;
+
+			int numlocalikautoplaylocks;
+			int localikautoplaylockindex;
+
+			float mass;
+			int contents;
+
+			int numincludemodels;
+			int includemodelindex;
+
+			int virtualModel;
+
+			int bonetablebynameindex;
+
+			int vgMeshCount;
+			int vgMeshOffset;
+
+			int boneStateOffset;
+			int boneStateCount;
+
+			int unk_v12_1;
+
+			int hwDataSize;
+
+			short vgUnk;
+			short numVGLods;
+
+			int lodMap;
+
+			int groupHeaderOffset;
+			int groupHeaderCount;
+
+			int vgLODOffset;
+			int vgLODCount;
+
+			float defaultFadeDist;
+			float gatherSize;
+
+			float flVertAnimFixedPointScale;
+			int surfacepropLookup;
+
+			int unk_v12_2; // unk_194 in template
+
+			int sourceFilenameOffset;
+
+			int numsrcbonetransform;
+			int srcbonetransformindex;
+
+			int	illumpositionattachmentindex;
+
+			int linearboneindex;
+
+			int procBoneCount;
+			int procBoneOffset;
+			int linearProcBoneOffset;
+
+			int unkStringOffset;
+
+			int vtxOffset;
+			int vvdOffset;
+			int vvcOffset;
+			int phyOffset;
+
+			int vtxSize;
+			int vvdSize;
+			int vvcSize;
+			int phySize;
+
+			int boneFollowerCount;
+			int boneFollowerOffset;
+
+			Vector bvhMin;
+			Vector bvhMax;
+
+			int bvhOffset;
+
+			short bvhUnk[2];
+
+			int vvwOffset;
+			int vvwSize;
+
+			int unk_20C[2]; // from v12.4
+			int unk_214;    // added in v12.5
+		};
+	}
+
 	namespace v130
 	{
 		struct mstudiomodel_t
@@ -4564,6 +4958,28 @@ namespace r5
 			int unk;
 		};
 
+		// v14+ mesh structure - material field changed from int to uint16_t
+		struct mstudiomesh_t
+		{
+			uint16_t material;  // Changed from int in v12.x
+			uint16_t unk_2;     // New field in v14+
+
+			int modelindex;
+
+			int numvertices; // number of unique vertices/normals/texcoords
+			int vertexoffset; // vertex mstudiovertex_t
+
+			// a unique ordinal for this mesh
+			int meshid;
+
+			Vector center;
+
+			// deprecated in later versions?
+			mstudio_meshvertexdata_t vertexloddata;
+
+			char unk[8]; // these are supposed to be filled on load
+		};
+
 		struct studiohdr_t
 		{
 			int id; // Model format ID, such as "IDST" (0x49 0x44 0x53 0x54)
@@ -4746,6 +5162,21 @@ namespace r5
 			int unk1_v54_v13[3];
 		};
 	}
+
+	// v15 (Season 15) - differs from v14 only in bodyparts structure
+	namespace v150
+	{
+		// v15 bodyparts has 2 extra fields compared to v14/earlier
+		struct mstudiobodyparts_t
+		{
+			int sznameindex;
+			int nummodels;
+			int base;
+			int modelindex;
+			int unk_10;     // NEW in v15
+			int meshOffset; // NEW in v15
+		};
+	}
 }
 
 // for r5 materials
@@ -4792,6 +5223,15 @@ struct s_modeldata_t
 	std::vector<stringentry_t> stringTable;
 	char* pBase;
 	char* pData;
+
+	// [RLE-BOUNDS] source .rmdl buffer extent (file base .. base+length). Used to
+	// OOB-guard embedded-animation reads: animated models reference EXTERNAL anim
+	// data (real anims ship as separate aseq assets, converted by R5-AnimConv), so
+	// their embedded animindex dangles past EOF. Reading it is an OOB read whose
+	// size-accumulation overruns pData and corrupts the heap. Left null = no bound
+	// (legacy behaviour) until a converter sets it.
+	const char* srcBeg = nullptr;
+	const char* srcEnd = nullptr;
 };
 
 inline s_modeldata_t g_model;
@@ -5218,6 +5658,62 @@ static int ConvertSequenceUnknown(r5::unkseqdata_t* pOldUnknown, int numUnknown)
 }
 
 //
+// AnimRefBlockSize / WriteAnimRefBlock
+// Purpose: emit the inline anim block that an animdesc with no converted RLE
+//          payload must still carry. A model whose animation lives in external
+//          aseq assets still ships a reference block here: the bone-flag nibble
+//          array with bone 0 marked STUDIO_ANIM_ROT, then one 10-byte
+//          mstudio_rle_anim_t holding bone 0's reference rotation as a
+//          Quaternion64. Every genuine multi-bone specimen carries it; a zeroed
+//          flag array is what leaves converted animated props in their bind pose.
+//
+static int AnimRefBlockFlagSize(int numBones)
+{
+	return ((4 * numBones + 7) / 8 + 1) & 0xFFFFFFFE;
+}
+
+static int AnimRefBlockSize(int numBones)
+{
+	return AnimRefBlockFlagSize(numBones) + 10;
+}
+
+static Quaternion AnimRefBone0Quat(const r5::v8::studiohdr_t* pHdr)
+{
+	if (!pHdr || pHdr->numbones <= 0 || pHdr->boneindex <= 0)
+		return Quaternion(0.0f, 0.0f, 0.0f, 1.0f);
+
+	return reinterpret_cast<const r5::v8::mstudiobone_t*>(
+		reinterpret_cast<const char*>(pHdr) + pHdr->boneindex)->quat;
+}
+
+static int WriteAnimRefBlock(char* pOut, int numBones, const Quaternion& bone0Quat)
+{
+	const int flagSize = AnimRefBlockFlagSize(numBones);
+	memset(pOut, 0, flagSize);
+	if (numBones <= 0)
+		return flagSize;
+
+	pOut[0] = static_cast<char>(0x2); // bone 0 nibble: STUDIO_ANIM_ROT
+
+	// The stored rotation is bone 0's reference quaternion pre-multiplied by this
+	// fixed basis; verified byte-exact against every authored specimen.
+	const Quaternion b(0.5f, 0.5f, 0.5f, 0.5f);
+	const Quaternion& q = bone0Quat;
+	Quaternion r;
+	r.x = b.w * q.x + b.x * q.w + b.y * q.z - b.z * q.y;
+	r.y = b.w * q.y + b.y * q.w + b.z * q.x - b.x * q.z;
+	r.z = b.w * q.z + b.z * q.w + b.x * q.y - b.y * q.x;
+	r.w = b.w * q.w - b.x * q.x - b.y * q.y - b.z * q.z;
+
+	char* p = pOut + flagSize;
+	*reinterpret_cast<uint16_t*>(p) = 10; // mstudio_rle_anim_t: size 10, flags 0
+	p += sizeof(uint16_t);
+	*reinterpret_cast<Quaternion64*>(p) = r;
+
+	return flagSize + 10;
+}
+
+//
 // ConvertAnimation
 // Purpose: copy animation from the old animation to the new animation
 //
@@ -5232,6 +5728,27 @@ static int ConvertAnimation(char* pOldAnimIndex, r5::v8::mstudioanimdesc_t* pNew
 
 	int flagSize = ((4 * numBones + 7) / 8 + 1) & 0xFFFFFFFE;
 
+	// [RLE-BOUNDS] The embedded RLE anim payload must lie inside the source .rmdl.
+	// Animated models reference EXTERNAL anim data (the real animation ships as a
+	// separate aseq asset, converted by R5-AnimConv), so their embedded animindex
+	// dangles past EOF. Reading it OOB and accumulating pOldRleAnim->size from
+	// garbage overruns g_model.pData -> heap corruption that surfaces as a crash on
+	// a LATER model. When the bone-flag array is out of bounds, emit a zeroed
+	// bone-flag placeholder (no per-bone RLE) and stop -- the runtime then treats
+	// every bone as identity, which is correct for a model whose anim lives elsewhere.
+	const char* const srcBeg = g_model.srcBeg;
+	const char* const srcEnd = g_model.srcEnd;
+	const bool boundsKnown = (srcBeg && srcEnd);
+
+	if (!pOldAnimIndex || (boundsKnown && (pOldAnimIndex < srcBeg || pOldAnimIndex + flagSize > srcEnd)))
+	{
+		printf("[RLE-OOB] embedded animindex out of source bounds -> zeroed placeholder\n");
+		memset(g_model.pData, 0, flagSize);
+		g_model.pData += flagSize;
+		ALIGN4(g_model.pData);
+		return index;
+	}
+
 	memcpy(g_model.pData, pOldAnimIndex, flagSize);
 	g_model.pData += flagSize;
 
@@ -5245,6 +5762,17 @@ static int ConvertAnimation(char* pOldAnimIndex, r5::v8::mstudioanimdesc_t* pNew
 	{
 		if ((pOldAnimIndex[boneIdx / 2] >> (4 * (boneIdx % 2))) & 0x7)
 		{
+			// Bound each RLE header (then its payload) against srcEnd. Check the
+			// header extent BEFORE dereferencing ->size so the size read is safe.
+			if (boundsKnown &&
+				((const char*)pOldRleAnim + sizeof(r5::mstudio_rle_anim_t) > srcEnd
+				|| pOldRleAnim->size <= 0
+				|| (const char*)pOldRleAnim + pOldRleAnim->size > srcEnd))
+			{
+				printf("[RLE-OOB] RLE payload past source EOF at bone %d -> stop\n", boneIdx);
+				break;
+			}
+
 			animationSize += pOldRleAnim->size;
 			pOldRleAnim = reinterpret_cast<r5::mstudio_rle_anim_t*>((char*)pOldRleAnim + pOldRleAnim->size);
 		}

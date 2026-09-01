@@ -4,6 +4,9 @@
 #include <pch.h>
 #include <studio/studio.h>
 #include <studio/versions.h>
+#include "../../collision/phy_parser.h"
+#include "../../collision/phy_to_bvh4.h"
+#include "../../collision/collision_generator.h"
 
 //
 // ConvertStudioHdr
@@ -323,14 +326,14 @@ void ConvertBodyParts_53(mstudiobodyparts_t* pOldBodyParts, int numBodyParts)
 
 		newbodypart->modelindex = g_model.pData - (char*)newbodypart;
 
-		// pointer to old models (in .mdl)
-		r1::mstudiomodel_t* oldModels = reinterpret_cast<r1::mstudiomodel_t*>((char*)oldbodypart + oldbodypart->modelindex);
+		// pointer to old models (in .mdl) - use r2 for TF2 v53
+		r2::mstudiomodel_t* oldModels = reinterpret_cast<r2::mstudiomodel_t*>((char*)oldbodypart + oldbodypart->modelindex);
 
 		// pointer to start of new model data (in .rmdl)
 		r5::v8::mstudiomodel_t* newModels = reinterpret_cast<r5::v8::mstudiomodel_t*>(g_model.pData);
 		for (int j = 0; j < newbodypart->nummodels; ++j)
 		{
-			r1::mstudiomodel_t* oldModel = oldModels + j;
+			r2::mstudiomodel_t* oldModel = oldModels + j;
 			r5::v8::mstudiomodel_t* newModel = reinterpret_cast<r5::v8::mstudiomodel_t*>(g_model.pData);
 
 			memcpy(&newModel->name, &oldModel->name, sizeof(newModel->name));
@@ -352,7 +355,7 @@ void ConvertBodyParts_53(mstudiobodyparts_t* pOldBodyParts, int numBodyParts)
 
 		for (int j = 0; j < newbodypart->nummodels; ++j)
 		{
-			r1::mstudiomodel_t* oldModel = oldModels + j;
+			r2::mstudiomodel_t* oldModel = oldModels + j;
 			r5::v8::mstudiomodel_t* newModel = newModels + j;
 
 			newModel->meshindex = g_model.pData - (char*)newModel;
@@ -623,7 +626,7 @@ void ConvertMDL53To54(char* pMDL, const std::string& pathIn, const std::string& 
 	std::ofstream out(rmdlPath, std::ios::out | std::ios::binary);
 
 	// allocate temp file buffer
-	g_model.pBase = new char[FILEBUFSIZE]{};
+	g_model.pBase = AllocModelBuf(FILEBUFSIZE);
 	g_model.pData = g_model.pBase;
 
 	// convert mdl hdr
@@ -720,6 +723,318 @@ void ConvertMDL53To54(char* pMDL, const std::string& pathIn, const std::string& 
 	g_model.pData = WriteStringTable(g_model.pData);
 	ALIGN4(g_model.pData);
 
+	// Generate BVH4 collision - prefer visual mesh (LOD0), fallback to PHY
+	{
+		printf("generating collision...\n");
+
+		collision::GenerationResult collResult;
+		bool collisionGenerated = false;
+
+		// =========================================================================
+		// PRIMARY: Generate collision from visual mesh (LOD0) - more reliable
+		// =========================================================================
+		if (vtxBuf && vvdBuf)
+		{
+			printf("  generating collision from LOD0 visual mesh...\n");
+
+			// Read VVD header to get vertex data
+			vvd::vertexFileHeader_t* vvdHeader = reinterpret_cast<vvd::vertexFileHeader_t*>(vvdBuf.get());
+
+			// Get vertex positions from VVD
+			std::vector<float> vertices;
+			std::vector<uint32_t> indices;
+
+			// Get vertices from VVD file
+			vvd::mstudiovertex_t* vvdVerts = reinterpret_cast<vvd::mstudiovertex_t*>(vvdBuf.get() + vvdHeader->vertexDataStart);
+			int numVerts = vvdHeader->numLODVertexes[0]; // Use LOD0
+
+			vertices.reserve(numVerts * 3);
+			for (int i = 0; i < numVerts; i++)
+			{
+				vertices.push_back(vvdVerts[i].m_vecPosition.x);
+				vertices.push_back(vvdVerts[i].m_vecPosition.y);
+				vertices.push_back(vvdVerts[i].m_vecPosition.z);
+			}
+
+			// Get indices from VTX file, using MDL mesh structure to get vertex offsets
+			OptimizedModel::FileHeader_t* vtxHeader = reinterpret_cast<OptimizedModel::FileHeader_t*>(vtxBuf.get());
+			OptimizedModel::BodyPartHeader_t* bodyParts = reinterpret_cast<OptimizedModel::BodyPartHeader_t*>(vtxBuf.get() + vtxHeader->bodyPartOffset);
+
+			// Track cumulative model vertex base across all models
+			int modelVertexBase = 0;
+
+			// Get MDL bodyparts array for accessing mesh vertex offsets
+			mstudiobodyparts_t* mdlBodyparts = reinterpret_cast<mstudiobodyparts_t*>((char*)oldHeader + oldHeader->bodypartindex);
+
+			for (int bp = 0; bp < vtxHeader->numBodyParts; bp++)
+			{
+				OptimizedModel::BodyPartHeader_t* bodyPart = &bodyParts[bp];
+				OptimizedModel::ModelHeader_t* vtxModels = reinterpret_cast<OptimizedModel::ModelHeader_t*>((char*)bodyPart + bodyPart->modelOffset);
+
+				// Get corresponding MDL bodypart to access mesh vertex offsets
+				mstudiobodyparts_t* mdlBodypart = &mdlBodyparts[bp];
+				r2::mstudiomodel_t* mdlModels = reinterpret_cast<r2::mstudiomodel_t*>((char*)mdlBodypart + mdlBodypart->modelindex);
+
+				for (int m = 0; m < bodyPart->numModels; m++)
+				{
+					OptimizedModel::ModelHeader_t* vtxModel = &vtxModels[m];
+					OptimizedModel::ModelLODHeader_t* lods = reinterpret_cast<OptimizedModel::ModelLODHeader_t*>((char*)vtxModel + vtxModel->lodOffset);
+
+					// Get corresponding MDL model
+					r2::mstudiomodel_t* mdlModel = &mdlModels[m];
+
+					// Only use LOD0
+					OptimizedModel::ModelLODHeader_t* lod = &lods[0];
+					OptimizedModel::MeshHeader_t* vtxMeshes = reinterpret_cast<OptimizedModel::MeshHeader_t*>((char*)lod + lod->meshOffset);
+
+					// Get MDL meshes for this model (use r2 mesh type for TF2)
+					r2::mstudiomesh_t* mdlMeshes = reinterpret_cast<r2::mstudiomesh_t*>((char*)mdlModel + mdlModel->meshindex);
+
+					for (int me = 0; me < lod->numMeshes; me++)
+					{
+						OptimizedModel::MeshHeader_t* vtxMesh = &vtxMeshes[me];
+						OptimizedModel::StripGroupHeader_t* stripGroups = reinterpret_cast<OptimizedModel::StripGroupHeader_t*>((char*)vtxMesh + vtxMesh->stripGroupHeaderOffset);
+
+						// Get the mesh's vertex offset from MDL
+						r2::mstudiomesh_t* mdlMesh = &mdlMeshes[me];
+						int meshVertexBase = modelVertexBase + mdlMesh->vertexoffset;
+
+						for (int sg = 0; sg < vtxMesh->numStripGroups; sg++)
+						{
+							OptimizedModel::StripGroupHeader_t* stripGroup = &stripGroups[sg];
+							OptimizedModel::Vertex_t* vtxVerts = reinterpret_cast<OptimizedModel::Vertex_t*>((char*)stripGroup + stripGroup->vertOffset);
+							uint16_t* vtxIndices = reinterpret_cast<uint16_t*>((char*)stripGroup + stripGroup->indexOffset);
+							OptimizedModel::StripHeader_t* strips = reinterpret_cast<OptimizedModel::StripHeader_t*>((char*)stripGroup + stripGroup->stripOffset);
+
+							for (int s = 0; s < stripGroup->numStrips; s++)
+							{
+								OptimizedModel::StripHeader_t* strip = &strips[s];
+
+								// Check strip type - STRIP_IS_TRILIST = 0x01
+								if (strip->flags & OptimizedModel::STRIP_IS_TRILIST)
+								{
+									// Triangle list: read triplets sequentially
+									for (int i = 0; i < strip->numIndices; i += 3)
+									{
+										int idx0 = vtxIndices[strip->indexOffset + i];
+										int idx1 = vtxIndices[strip->indexOffset + i + 1];
+										int idx2 = vtxIndices[strip->indexOffset + i + 2];
+
+										// Add mesh vertex base to get correct global VVD index
+										indices.push_back(meshVertexBase + vtxVerts[idx0].origMeshVertID);
+										indices.push_back(meshVertexBase + vtxVerts[idx1].origMeshVertID);
+										indices.push_back(meshVertexBase + vtxVerts[idx2].origMeshVertID);
+									}
+								}
+								else
+								{
+									// Triangle strip: each new index forms a triangle with previous two
+									for (int i = 0; i < strip->numIndices - 2; i++)
+									{
+										int idx0 = vtxIndices[strip->indexOffset + i];
+										int idx1 = vtxIndices[strip->indexOffset + i + 1];
+										int idx2 = vtxIndices[strip->indexOffset + i + 2];
+
+										// Alternate winding order for triangle strips
+										if (i & 1)
+										{
+											std::swap(idx1, idx2);
+										}
+
+										// Skip degenerate triangles (used for strip stitching)
+										if (idx0 == idx1 || idx1 == idx2 || idx0 == idx2)
+											continue;
+
+										// Add mesh vertex base to get correct global VVD index
+										indices.push_back(meshVertexBase + vtxVerts[idx0].origMeshVertID);
+										indices.push_back(meshVertexBase + vtxVerts[idx1].origMeshVertID);
+										indices.push_back(meshVertexBase + vtxVerts[idx2].origMeshVertID);
+									}
+								}
+							}
+						}
+					}
+
+					// Move to next model's vertex range
+					modelVertexBase += mdlModel->numvertices;
+				}
+			}
+
+			if (!vertices.empty() && !indices.empty())
+			{
+				uint32_t numVerts = static_cast<uint32_t>(vertices.size() / 3);
+				uint32_t numTris = static_cast<uint32_t>(indices.size() / 3);
+
+				printf("  collision input: %u vertices, %u triangles\n", numVerts, numTris);
+
+				// Validate indices
+				uint32_t maxIdx = 0;
+				bool hasInvalidIdx = false;
+				for (size_t i = 0; i < indices.size(); i++)
+				{
+					if (indices[i] >= numVerts)
+					{
+						if (!hasInvalidIdx)
+						{
+							printf("  WARNING: triangle index %u at position %zu is out of bounds (max=%u)\n",
+								indices[i], i, numVerts - 1);
+						}
+						hasInvalidIdx = true;
+					}
+					if (indices[i] > maxIdx) maxIdx = indices[i];
+				}
+
+				if (!hasInvalidIdx)
+				{
+					collResult = collision::QuickGenerate(
+						vertices.data(),
+						numVerts,
+						indices.data(),
+						numTris
+					);
+					collisionGenerated = collResult.success;
+
+					if (collisionGenerated)
+					{
+						printf("  visual mesh collision generated: %u nodes, %u triangles\n",
+							collResult.nodeCount, collResult.triangleCount);
+					}
+					else
+					{
+						printf("  failed to generate visual mesh collision: %s\n", collResult.errorMessage.c_str());
+					}
+				}
+				else
+				{
+					printf("  skipping visual mesh collision due to invalid indices\n");
+				}
+			}
+			else
+			{
+				printf("  no mesh data available for collision\n");
+			}
+		}
+
+		// =========================================================================
+		// FALLBACK: Generate collision from PHY data if visual mesh failed
+		// =========================================================================
+		if (!collisionGenerated && vphyBuf && oldHeader->phySize > 0)
+		{
+			printf("  falling back to PHY collision conversion...\n");
+
+			// Parse PHY format
+			collision::ParsedPHYData phyData =
+				collision::PHYParser::Parse(vphyBuf.get(), oldHeader->phySize);
+
+			if (phyData.valid && !phyData.solids.empty())
+			{
+				// Compute WORLD-space bone matrices
+				r5::v8::mstudiobone_t* bones = reinterpret_cast<r5::v8::mstudiobone_t*>((char*)pHdr + pHdr->boneindex);
+
+				std::vector<matrix3x4_t> localBones(pHdr->numbones);
+				std::vector<matrix3x4_t> worldBones(pHdr->numbones);
+				std::vector<float> bonePoses(pHdr->numbones * 12);
+
+				// First pass: compute local matrices from bone quat/pos
+				for (int i = 0; i < pHdr->numbones; i++)
+				{
+					r5::v8::mstudiobone_t* bone = &bones[i];
+					QuaternionMatrix(bone->quat, bone->pos, localBones[i]);
+				}
+
+				// Second pass: chain parent transforms to get world matrices
+				for (int i = 0; i < pHdr->numbones; i++)
+				{
+					r5::v8::mstudiobone_t* bone = &bones[i];
+
+					if (bone->parent < 0)
+					{
+						worldBones[i] = localBones[i];
+					}
+					else
+					{
+						ConcatTransforms(worldBones[bone->parent], localBones[i], worldBones[i]);
+					}
+				}
+
+				// Copy world matrices to flat array
+				for (int i = 0; i < pHdr->numbones; i++)
+				{
+					float* dst = &bonePoses[i * 12];
+					for (int row = 0; row < 3; row++)
+					{
+						for (int col = 0; col < 4; col++)
+						{
+							dst[row * 4 + col] = worldBones[i][row][col];
+						}
+					}
+				}
+
+				// Configure conversion
+				collision::PHYConversionConfig convConfig;
+				convConfig.bvhConfig.maxTrianglesPerLeaf = 4;
+				convConfig.bvhConfig.defaultSurfaceProp = "default";
+				convConfig.bvhConfig.contentsMask = oldHeader->contents;
+				convConfig.debugOutput = false;
+				convConfig.validateTransforms = true;
+
+				// Convert PHY → BVH4
+				collResult = collision::PHYToBVH4Converter::Convert(phyData, bonePoses.data(), pHdr->numbones, convConfig);
+				collisionGenerated = collResult.success;
+
+				if (collisionGenerated)
+				{
+					printf("  PHY -> BVH4 complete: %u solids -> %u triangles, %u nodes\n",
+						(uint32_t)phyData.solids.size(),
+						collResult.triangleCount,
+						collResult.nodeCount);
+				}
+				else
+				{
+					printf("  ERROR: PHY BVH4 generation failed: %s\n", collResult.errorMessage.c_str());
+				}
+			}
+			else
+			{
+				printf("  ERROR: PHY parsing failed: %s\n", phyData.errorMessage.c_str());
+			}
+		}
+
+		// =========================================================================
+		// Write collision data if generated successfully
+		// =========================================================================
+		if (collisionGenerated && !collResult.collisionData.empty())
+		{
+			ALIGN16(g_model.pData);
+			pHdr->bvhOffset = g_model.pData - g_model.pBase;
+			memcpy(g_model.pData, collResult.collisionData.data(), collResult.collisionData.size());
+			g_model.pData += collResult.collisionData.size();
+
+			// Set collision bounds
+			pHdr->mins = Vector(
+				collResult.boundsMin[0],
+				collResult.boundsMin[1],
+				collResult.boundsMin[2]
+			);
+			pHdr->maxs = Vector(
+				collResult.boundsMax[0],
+				collResult.boundsMax[1],
+				collResult.boundsMax[2]
+			);
+
+			printf("  collision written: %zu bytes\n", collResult.collisionData.size());
+		}
+		else
+		{
+			// No collision generated - use hull bounds
+			pHdr->mins = pHdr->hull_min;
+			pHdr->maxs = pHdr->hull_max;
+			pHdr->bvhOffset = 0;
+
+			printf("  WARNING: no collision generated, using hull bounds\n");
+		}
+	}
+
 	pHdr->length = g_model.pData - g_model.pBase;
 
 	out.write(g_model.pBase, pHdr->length);
@@ -727,8 +1042,41 @@ void ConvertMDL53To54(char* pMDL, const std::string& pathIn, const std::string& 
 	// now that rmdl is fully converted, convert vtx/vvd/vvc to VG
 	CreateVGFile(ChangeExtension(pathOut, "vg"), pHdr, vtxBuf.get(), vvdBuf.get(), vvcBuf.get(), nullptr);
 
+	// Write external .phy file for ragdoll physics
+	if (vphyBuf && oldHeader->phySize > 0)
+	{
+		printf("writing external .phy file for ragdoll physics...\n");
+
+		std::string phyPath = ChangeExtension(pathOut, "phy");
+		std::ofstream phyOut(phyPath, std::ios::out | std::ios::binary);
+
+		if (phyOut.is_open())
+		{
+			phyOut.write(vphyBuf.get(), oldHeader->phySize);
+			phyOut.close();
+
+			printf("  wrote external .phy file (%d bytes)\n", oldHeader->phySize);
+
+			// Header already configured:
+			// - pHdr->phyOffset = -123456 (external file sentinel)
+			// - pHdr->phySize > 0 (tells Apex to load .phy)
+		}
+		else
+		{
+			printf("  ERROR: failed to create .phy file at '%s'\n", phyPath.c_str());
+
+			// Disable PHY to avoid crash
+			pHdr->phySize = 0;
+		}
+	}
+	else
+	{
+		printf("  No PHY data for ragdoll physics\n");
+		pHdr->phySize = 0; // Ensure PHY is disabled
+	}
+
 	// now delete rmdl buffer so we can write the rig
-	delete[] g_model.pBase;
+	FreeModelBuf(g_model.pBase);
 
 	///////////////
 	// ANIM RIGS //
@@ -749,7 +1097,7 @@ void ConvertMDL53To54(char* pMDL, const std::string& pathIn, const std::string& 
 	std::string rrigPath = ChangeExtension(pathOut, "rrig");
 	std::ofstream rigOut(rrigPath, std::ios::out | std::ios::binary);
 
-	g_model.pBase = new char[FILEBUFSIZE] {};
+	g_model.pBase = AllocModelBuf(FILEBUFSIZE);
 	g_model.pData = g_model.pBase;
 
 	// generate rig
@@ -801,7 +1149,7 @@ void ConvertMDL53To54(char* pMDL, const std::string& pathIn, const std::string& 
 
 	rigOut.write(g_model.pBase, pHdr->length);
 
-	delete[] g_model.pBase;
+	FreeModelBuf(g_model.pBase);
 	//printf("Done!\n");
 
 

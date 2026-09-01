@@ -597,7 +597,7 @@ void ConvertMDL48To54(char* pMDL, const std::string& pathIn, const std::string& 
 	std::ofstream out(rmdlPath, std::ios::out | std::ios::binary);
 
 	// allocate temp file buffer
-	g_model.pBase = new char[FILEBUFSIZE]{};
+	g_model.pBase = AllocModelBuf(FILEBUFSIZE);
 	g_model.pData = g_model.pBase;
 
 	// convert mdl hdr
@@ -702,7 +702,7 @@ void ConvertMDL48To54(char* pMDL, const std::string& pathIn, const std::string& 
 	CreateVGFile(ChangeExtension(pathOut, "vg"), pHdr, vtxBuf.get(), vvdBuf.get(), nullptr, nullptr);
 
 	// now delete rmdl buffer so we can write the rig
-	delete[] g_model.pBase;
+	FreeModelBuf(g_model.pBase);
 
 	///////////////
 	// ANIM RIGS //
@@ -724,7 +724,7 @@ void ConvertMDL48To54(char* pMDL, const std::string& pathIn, const std::string& 
 	std::string rrigPath = ChangeExtension(filePath, "rrig");
 	std::ofstream rigOut(rrigPath, std::ios::out | std::ios::binary);
 
-	g_model.pBase = new char[FILEBUFSIZE] {};
+	g_model.pBase = AllocModelBuf(FILEBUFSIZE);
 	g_model.pData = g_model.pBase;
 
 	// generate rig
@@ -776,7 +776,7 @@ void ConvertMDL48To54(char* pMDL, const std::string& pathIn, const std::string& 
 
 	rigOut.write(g_model.pBase, pHdr->length);
 
-	delete[] g_model.pBase;
+	FreeModelBuf(g_model.pBase);
 
 	*/
 	g_model.stringTable.clear(); // cleanup string table

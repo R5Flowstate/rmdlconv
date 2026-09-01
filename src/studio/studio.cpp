@@ -247,7 +247,12 @@ void CVertexHardwareDataFile_V1::FillFromDiskFiles(r5::v8::studiohdr_t* pHdr, Op
 {
 	bool isLargeModel = false;
 
-	// cheat because I think s3 is not a fan of mixed matched vertexes? we will see. remove if true
+	printf("  [VG] Hull bounds: min(%.1f, %.1f, %.1f) max(%.1f, %.1f, %.1f)\n",
+		pHdr->hull_min.x, pHdr->hull_min.y, pHdr->hull_min.z,
+		pHdr->hull_max.x, pHdr->hull_max.y, pHdr->hull_max.z);
+
+	// Check if model exceeds Vector64 encoding limits
+	// Vector64 can encode: X/Y in [-1024, 1024], Z in [-2048, 2048]
 	if (!isLargeModel && (pHdr->hull_min.x < -1023.f || pHdr->hull_max.x > 1023.f))
 		isLargeModel = true;
 
@@ -256,6 +261,10 @@ void CVertexHardwareDataFile_V1::FillFromDiskFiles(r5::v8::studiohdr_t* pHdr, Op
 
 	if (!isLargeModel && (pHdr->hull_min.z < -2047.f || pHdr->hull_max.z > 2047.f))
 		isLargeModel = true;
+
+	printf("  [VG] isLargeModel = %s (using %s positions)\n",
+		isLargeModel ? "TRUE" : "FALSE",
+		isLargeModel ? "full float" : "Vector64 packed");
 
 	// add some default flags
 	defaultMeshFlags |= VERTEX_HAS_UNK;
@@ -314,6 +323,17 @@ void CVertexHardwareDataFile_V1::FillFromDiskFiles(r5::v8::studiohdr_t* pHdr, Op
 					OptimizedModel::MeshHeader_t* pVtxMesh = pVtxLod->pMesh(meshIdx);
 					r5::v8::mstudiomesh_t* pMdlMesh = pMdlModel->pMesh(meshIdx); // remove if unneeded
 
+					// IMPORTANT: Use global mesh index for parentMeshIndex, not local meshIdx
+					int globalMeshIndex = static_cast<int>(meshes.size());
+
+					// Debug: show mesh info (only first 3 meshes to avoid spam)
+					if (lodIdx == 0 && meshIdx < 3)
+					{
+						printf("  [VG] Mesh %d (global %d): numvertices=%d, vertexoffset=%d, numLODVertexes[0]=%d, localVertOffset=%d\n",
+							meshIdx, globalMeshIndex, pMdlMesh->numvertices, pMdlMesh->vertexoffset,
+							pMdlMesh->vertexloddata.numLODVertexes[0], localVertOffset);
+					}
+
 					vg::rev1::MeshHeader_t newHwMesh {};
 
 					newHwMesh.stripOffset = strips.size();
@@ -340,6 +360,9 @@ void CVertexHardwareDataFile_V1::FillFromDiskFiles(r5::v8::studiohdr_t* pHdr, Op
 
 					newHwMesh.stripCount = 1; // hardcoded because apex doesn't like reading more than one
 
+					// Track cumulative vertex count within this mesh for index offsetting
+					int meshVertexBase = 0;
+
 					for (int stripGrpIdx = 0; stripGrpIdx < pVtxMesh->numStripGroups; stripGrpIdx++)
 					{
 						OptimizedModel::StripGroupHeader_t* pVtxStripGrp = pVtxMesh->pStripGroup(stripGrpIdx);
@@ -363,7 +386,7 @@ void CVertexHardwareDataFile_V1::FillFromDiskFiles(r5::v8::studiohdr_t* pHdr, Op
 							//const Vector4* const pVvdTangent = pVVD->GetTangentData(localVertOffset + pVtxVert->origMeshVertID);
 							vg::Vertex_t newHwVert {};
 
-							newHwVert.parentMeshIndex = meshIdx; // set the mesh index for later usage
+							newHwVert.parentMeshIndex = globalMeshIndex; // set the GLOBAL mesh index for later usage
 							newHwVert.m_NormalTangentPacked = PackNormalTangent_UINT32(pVvdVert->m_vecNormal, *pVvdTangents[localVertOffset + pVtxVert->origMeshVertID]);
 							newHwVert.m_vecPosition = pVvdVert->m_vecPosition;
 							newHwVert.m_vecPositionPacked = pVvdVert->m_vecPosition;
@@ -469,10 +492,22 @@ void CVertexHardwareDataFile_V1::FillFromDiskFiles(r5::v8::studiohdr_t* pHdr, Op
 							vertices.push_back(newHwVert);
 						}
 
-						// copy indices
+						// copy indices with offset for multi-stripgroup meshes
+						// VTX indices are local to the stripgroup (0 to numVerts-1)
+						// We need to offset them by the cumulative vertex count within this mesh
 						int indicesOffset = indices.size();
 						indices.resize(indices.size() + pVtxStripGrp->numIndices);
-						std::memcpy(indices.data() + indicesOffset, pVtxStripGrp->indices(), pVtxStripGrp->numIndices * sizeof(unsigned short));
+
+						unsigned short* srcIndices = pVtxStripGrp->indices();
+						unsigned short* dstIndices = indices.data() + indicesOffset;
+
+						for (int idxI = 0; idxI < pVtxStripGrp->numIndices; idxI++)
+						{
+							dstIndices[idxI] = srcIndices[idxI] + meshVertexBase;
+						}
+
+						// Update the vertex base for the next stripgroup
+						meshVertexBase += pVtxStripGrp->numVerts;
 					}
 
 					strips.push_back(newHwStrip);
@@ -493,7 +528,15 @@ void CVertexHardwareDataFile_V1::FillFromDiskFiles(r5::v8::studiohdr_t* pHdr, Op
 					meshes.push_back(newHwMesh);
 
 					// current vertex offset into vvd
-					localVertOffset += pMdlMesh->vertexloddata.numLODVertexes[lodIdx];
+					int meshVertCount = pMdlMesh->vertexloddata.numLODVertexes[lodIdx];
+					if (meshVertCount == 0)
+					{
+						// Fallback: use numvertices if numLODVertexes is not set
+						meshVertCount = pMdlMesh->numvertices;
+						printf("  [VG] WARNING: Mesh %d has numLODVertexes[%d]=0, using numvertices=%d\n",
+							meshIdx, lodIdx, meshVertCount);
+					}
+					localVertOffset += meshVertCount;
 
 					//hdr.vertCount += newHwMesh.vertCount;
 					hdr.indexCount += newHwMesh.indexCount;
@@ -508,6 +551,20 @@ void CVertexHardwareDataFile_V1::FillFromDiskFiles(r5::v8::studiohdr_t* pHdr, Op
 		}
 
 		lods.push_back(newHwLOD);
+	}
+
+	printf("  [VG] Created: %zu meshes, %zu vertices, %zu indices\n",
+		meshes.size(), vertices.size(), indices.size());
+
+	// Debug: show first mesh flags to verify position format
+	if (!meshes.empty())
+	{
+		__int64 flags = meshes[0].flags;
+		printf("  [VG] Mesh 0 flags: 0x%llX (POS=%d, POS_PACKED=%d, vertCacheSize=%u)\n",
+			flags,
+			(flags & 0x1) ? 1 : 0,
+			(flags & 0x2) ? 1 : 0,
+			meshes[0].vertCacheSize);
 	}
 }
 
@@ -535,6 +592,14 @@ void CVertexHardwareDataFile_V1::Write(const std::string& filePath)
 	for (int i = 0; i < vertices.size(); i++)
 	{
 		vg::Vertex_t vertex = vertices.at(i);
+
+		// Validate parentMeshIndex
+		if (vertex.parentMeshIndex < 0 || vertex.parentMeshIndex >= meshes.size())
+		{
+			printf("  [VG] ERROR: Vertex %d has invalid parentMeshIndex %lld (meshes.size=%zu)\n",
+				i, vertex.parentMeshIndex, meshes.size());
+			continue;
+		}
 
 		__int64 localFlags = meshes[vertex.parentMeshIndex].flags;
 

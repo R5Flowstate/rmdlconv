@@ -29,26 +29,26 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
@@ -172,11 +172,37 @@
     <ClCompile Include="studio\model\mdl_53.cpp" />
     <ClCompile Include="studio\model\rmdl_120.cpp" />
     <ClCompile Include="studio\model\rmdl_121.cpp" />
+    <ClCompile Include="studio\model\rmdl_140.cpp" />
+    <ClCompile Include="studio\model\rmdl_160.cpp" />
+    <ClCompile Include="studio\model\rmdl_191.cpp" />
+    <ClCompile Include="studio\model\rmdl_191_v17.cpp" />
+    <ClCompile Include="studio\model\rmdl_122_v17.cpp" />
+    <ClCompile Include="studio\model\rmdl_8_v17.cpp" />
     <ClCompile Include="studio\model\rmdl_8.cpp" />
     <ClCompile Include="studio\seq\rseq_71.cpp" />
     <ClCompile Include="studio\seq\rseq_v10.cpp" />
     <ClCompile Include="studio\studio.cpp" />
     <ClCompile Include="studio\versions.cpp" />
+    <ClCompile Include="collision\bvh4_builder.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="collision\collision_generator.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="collision\collision_smd.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="collision\phy_parser.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="collision\phy_to_bvh4.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="core\BinaryIO.h" />
@@ -196,7 +222,16 @@
     <ClInclude Include="studio\common.h" />
     <ClInclude Include="studio\optimize.h" />
     <ClInclude Include="studio\studio.h" />
+    <ClInclude Include="studio\studio_r5_v16.h" />
+    <ClInclude Include="studio\studio_r5_v19.h" />
     <ClInclude Include="studio\versions.h" />
+    <ClInclude Include="collision\bvh4_types.h" />
+    <ClInclude Include="collision\bvh4_builder.h" />
+    <ClInclude Include="collision\collision_generator.h" />
+    <ClInclude Include="collision\collision_integration.h" />
+    <ClInclude Include="collision\collision_smd.h" />
+    <ClInclude Include="collision\phy_parser.h" />
+    <ClInclude Include="collision\phy_to_bvh4.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

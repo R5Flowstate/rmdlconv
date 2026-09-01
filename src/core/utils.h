@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
+#include <new>
 #include <string>
 #include <filesystem>
 #include <iostream>
@@ -25,6 +27,21 @@ typedef char byte;
 #define ALIGN32( a ) a = (byte *)((__int64)((byte *)a + 31) & ~ 31)
 #define ALIGN64( a ) a = (byte *)((__int64)((byte *)a + 63) & ~ 63)
 #define ALIGN512( a ) a = (byte *)((__int64)((byte *)a + 511) & ~ 511)
+
+// pBase must be 512-aligned so ALIGN* deltas are file-relative. SSE2 BVH loads #GP(0) on unaligned nodes.
+constexpr size_t kModelBufAlign = 512;
+
+static char* AllocModelBuf(size_t size)
+{
+	char* const p = static_cast<char*>(::operator new[](size, std::align_val_t{ kModelBufAlign }));
+	memset(p, 0, size);
+	return p;
+}
+
+static void FreeModelBuf(char* p)
+{
+	::operator delete[](p, std::align_val_t{ kModelBufAlign });
+}
 
 #ifdef max
 #undef max

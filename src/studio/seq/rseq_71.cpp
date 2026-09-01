@@ -64,7 +64,7 @@ void ConvertRSEQFrom71To7(char* buf, char* externalbuf, const std::string& fileP
 	int numBones = (oldSeqDesc->activitymodifierindex - oldSeqDesc->weightlistindex) / 4;
 
 	// allocate temp file buffer
-	g_model.pBase = new char[FILEBUFSIZE] {};
+	g_model.pBase = AllocModelBuf(FILEBUFSIZE);
 	g_model.pData = g_model.pBase;
 
 	// convert mdl hdr
@@ -122,7 +122,7 @@ void ConvertRSEQFrom71To7(char* buf, char* externalbuf, const std::string& fileP
 
 	out.write(g_model.pBase, g_model.pData - g_model.pBase);
 
-	delete[] g_model.pBase;
+	FreeModelBuf(g_model.pBase);
 
 	printf("Done!\n");
 }
