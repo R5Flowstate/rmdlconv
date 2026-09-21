@@ -154,6 +154,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="core\CommandLine.cpp" />
+    <ClCompile Include="core\oodle.cpp" />
     <ClCompile Include="core\math\color32.cpp" />
     <ClCompile Include="core\math\mathlib.cpp" />
     <ClCompile Include="core\math\matrix3x4.cpp" />
@@ -175,6 +176,7 @@
     <ClCompile Include="studio\model\rmdl_140.cpp" />
     <ClCompile Include="studio\model\rmdl_160.cpp" />
     <ClCompile Include="studio\model\rmdl_191.cpp" />
+    <ClCompile Include="studio\model\rmdl_19s30_v17.cpp" />
     <ClCompile Include="studio\model\rmdl_191_v17.cpp" />
     <ClCompile Include="studio\model\rmdl_122_v17.cpp" />
     <ClCompile Include="studio\model\rmdl_8_v17.cpp" />

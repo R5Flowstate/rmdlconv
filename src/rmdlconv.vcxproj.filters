@@ -3,6 +3,9 @@
   <ItemGroup>
     <ClCompile Include="pch.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="core\oodle.cpp">
+      <Filter>core</Filter>
+    </ClCompile>
     <ClCompile Include="core\CommandLine.cpp">
       <Filter>core</Filter>
     </ClCompile>
@@ -43,6 +46,9 @@
       <Filter>studio\model</Filter>
     </ClCompile>
     <ClCompile Include="studio\model\rmdl_8_v17.cpp">
+      <Filter>studio\model</Filter>
+    </ClCompile>
+    <ClCompile Include="studio\model\rmdl_19s30_v17.cpp">
       <Filter>studio\model</Filter>
     </ClCompile>
     <ClCompile Include="core\math\color32.cpp">

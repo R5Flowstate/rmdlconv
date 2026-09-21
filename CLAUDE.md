@@ -24,8 +24,15 @@ Folder flags take a **directory**. `-convertmodel` takes one file.
 | `-v8 … -targetversion 17` | S3 v8 → S21 v17 |
 | `-v49 … -targetversion 17` | Portal 2 / TF2 `.mdl` → S21 v17 |
 | `-v191 <src> <out>` | v19.1 → v17 compact (seqdesc/animdesc shrink) |
+| `-v19s30 <src> <out> -targetversion 17` | newer-season mdl_ v19 (244B hdr, 16B insert @180) → S21 v17; stored VG per-group Oodle blocks are decompressed and concatenated to rev4 |
+| `-v19s30 <src> <out>` | same source → dedi v54 (via a temp v17) |
 | `-nopause` | no console pause |
 | `-outputdir` | with `-convertmodel` |
+
+`-v19s30` needs an `oo2core_*_win64.dll` next to the exe (or `OODLE_DLL`);
+without one every compressed VG fails loudly. A v19 header with flag `0x4000`
+stores 10-bit vertex bone indices across bytes 5-6; the converter unpacks
+them to plain bytes and clears the flag.
 
 Peek magic/`version` at +4 before choosing a path. Prefer the `.mdl` when both
 a `.mdl` and a stripped `.rmdl` exist.

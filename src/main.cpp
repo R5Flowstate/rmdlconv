@@ -403,8 +403,9 @@ const char* pszBatchHelpString = {
 	"  -v17    Model v17 (S17-18, rseq v11)\n"
 	"  -v18    Model v18 (S18, rseq v12)\n"
 	"  -v19    Model v19 (S19, rseq v12)\n"
-	"  -v191   Model v19.1 (S19+, rseq v12.1)\n"
-	"\n"
+  "  -v191   Model v19.1 (S19+, rseq v12.1)\n"
+  "  -v19s30  Model v19-S30 (S30); default DEDI v10, add -targetversion 17 for S21 client\n"
+  "\n"
 	"If output_folder is not specified, uses '<input_folder>_rmdlconv_out'\n"
 	"Internal folder structure is preserved.\n"
 	"\n"
@@ -499,6 +500,16 @@ void BatchConvertModels(const std::string& sourceVersion, const std::string& inp
 	int failCount = 0;
 	int totalCount = 0;
 
+	// S30 dedi staging: the v17 intermediate for each model lives here while
+	// the stock v17 -> v10 path runs over it. Removed at the end of the batch.
+	const bool is19S30Dedi = (sourceVersion == "19s30" && targetVersion != 17);
+	std::string s30TempDir;
+	if (is19S30Dedi)
+	{
+		s30TempDir = (outputPath / ".v19s30tmp").string();
+		std::filesystem::create_directories(s30TempDir);
+	}
+
 	// Recursively find all .rmdl files
 	for (const auto& entry : std::filesystem::recursive_directory_iterator(inputPath))
 	{
@@ -585,6 +596,29 @@ void BatchConvertModels(const std::string& sourceVersion, const std::string& inp
 				ifs.read(pMDL.get(), fileSize);
 				ifs.close();
 				ConvertRMDL191To17(pMDL.get(), fileSize, inputFile, outputFile);
+				successCount++;
+			}
+			catch (const std::exception& e) { printf("  ERROR: %s\n", e.what()); failCount++; }
+			continue;
+		}
+
+		// S30 v19 -> S21 CLIENT v17. `-v19s30` defaults to the DEDI v10 path below;
+		// `-v19s30 -targetversion 17` routes here.
+		if (sourceVersion == "19s30" && targetVersion == 17)
+		{
+			try { ConvertClientModel_19S30To17(inputFile, outputFile); successCount++; }
+			catch (const std::exception& e) { printf("  ERROR: %s\n", e.what()); failCount++; }
+			continue;
+		}
+
+		// S30 v19 -> S3 DEDI v10 (default `-v19s30`): S30 -> temp v17, then the
+		// stock v17 -> v10 path, so client and dedi share one front end.
+		if (sourceVersion == "19s30")
+		{
+			try
+			{
+				ConvertClientModel_19S30ToDedi(inputFile, outputFile, s30TempDir,
+					relativePath.u8string());
 				successCount++;
 			}
 			catch (const std::exception& e) { printf("  ERROR: %s\n", e.what()); failCount++; }
@@ -708,6 +742,15 @@ void BatchConvertModels(const std::string& sourceVersion, const std::string& inp
 	printf("  Success: %d\n", successCount);
 	printf("  Failed:  %d\n", failCount);
 	printf("========================================\n");
+
+	if (is19S30Dedi)
+	{
+		std::error_code ec;
+		std::filesystem::remove_all(s30TempDir, ec);
+		if (ec)
+			printf("WARNING: could not remove temp dir %s (%s)\n",
+				s30TempDir.c_str(), ec.message().c_str());
+	}
 }
 
 // Opt-in: when true, the v160 -> v8 conversion auto-generates a BVH4 from
@@ -760,8 +803,8 @@ int main(int argc, char** argv)
         Error("invalid usage\n");
 
 	// Check for batch conversion flags
-	const char* batchVersionFlags[] = { "-v8", "-v49", "-vp2", "-v121", "-v122", "-v123", "-v124", "-v125", "-v13", "-v131", "-v14", "-v141", "-v15", "-v16", "-v17", "-v18", "-v19", "-v191", nullptr };
-	const char* batchVersionValues[] = { "8", "49", "49", "12.1", "12.2", "12.3", "12.4", "12.5", "13", "13.1", "14", "14.1", "15", "16", "17", "18", "19", "19.1", nullptr };
+	const char* batchVersionFlags[] = { "-v8", "-v49", "-vp2", "-v121", "-v122", "-v123", "-v124", "-v125", "-v13", "-v131", "-v14", "-v141", "-v15", "-v16", "-v17", "-v18", "-v19", "-v191", "-v19s30", nullptr };
+	const char* batchVersionValues[] = { "8", "49", "49", "12.1", "12.2", "12.3", "12.4", "12.5", "13", "13.1", "14", "14.1", "15", "16", "17", "18", "19", "19.1", "19s30", nullptr };
 
 	printf("[DEBUG] Checking batch flags...\n");
 	fflush(stdout);

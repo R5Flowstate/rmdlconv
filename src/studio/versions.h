@@ -119,6 +119,19 @@ CollSurfPropPlan_t PlanCollisionSurfacePropRemap(
 void ApplyCollisionSurfacePropRemap(const CollSurfPropPlan_t& plan, int part,
 	char* const dstLeafBase, const int dstLeafDwords, const char* const modelName);
 
+// S30 input (mdl_ v19-S30, 244B header) -> S21 client v17 rebuild.
+// Buffer in, v17 bytes out (plus diagnostic warnings); false on failure.
+bool ConvertRMDL19S30To17(const char* pIn, size_t inSize, std::vector<char>& outBytes,
+	std::vector<std::string>& warnings, std::string& err);
+// S30 stored starpak VG slice -> S21 raw VG (slice/decompress/concat per group).
+bool ConvertVGStored19S30(const char* pRmdl, size_t rmdlSize, const char* pStored,
+	size_t storedSize, std::vector<char>& outRaw, std::string& err);
+// Orchestrators (.rmdl + sibling .vg/.vg_static/.phy).
+void ConvertClientModel_19S30To17(const std::string& inputFile, const std::string& outputFile);
+// S30 -> S3 dedi v54 via a temp v17 (tempDir mirrors relPath to avoid collisions).
+void ConvertClientModel_19S30ToDedi(const std::string& inputFile, const std::string& outputFile,
+	const std::string& tempDir, const std::string& relPath);
+
 // compact downgrade: mdl_ v19.1 -> v17 (S21 client). Keeps the
 // v19.1 on-disk shape; only shrinks seqdesc 116B->112B and animdesc 48B->40B.
 void ConvertRMDL191To17(char* pMDL, const size_t fileSize, const std::string& pathIn, const std::string& pathOut);
