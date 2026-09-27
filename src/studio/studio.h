@@ -5224,12 +5224,9 @@ struct s_modeldata_t
 	char* pBase;
 	char* pData;
 
-	// [RLE-BOUNDS] source .rmdl buffer extent (file base .. base+length). Used to
-	// OOB-guard embedded-animation reads: animated models reference EXTERNAL anim
-	// data (real anims ship as separate aseq assets, converted by R5-AnimConv), so
-	// their embedded animindex dangles past EOF. Reading it is an OOB read whose
-	// size-accumulation overruns pData and corrupts the heap. Left null = no bound
-	// (legacy behaviour) until a converter sets it.
+	// Source .rmdl extent that bounds embedded-animation reads: animated models keep
+	// their clips in separate aseq assets, so the embedded animindex can point past EOF.
+	// Null means unbounded.
 	const char* srcBeg = nullptr;
 	const char* srcEnd = nullptr;
 };
@@ -5728,14 +5725,9 @@ static int ConvertAnimation(char* pOldAnimIndex, r5::v8::mstudioanimdesc_t* pNew
 
 	int flagSize = ((4 * numBones + 7) / 8 + 1) & 0xFFFFFFFE;
 
-	// [RLE-BOUNDS] The embedded RLE anim payload must lie inside the source .rmdl.
-	// Animated models reference EXTERNAL anim data (the real animation ships as a
-	// separate aseq asset, converted by R5-AnimConv), so their embedded animindex
-	// dangles past EOF. Reading it OOB and accumulating pOldRleAnim->size from
-	// garbage overruns g_model.pData -> heap corruption that surfaces as a crash on
-	// a LATER model. When the bone-flag array is out of bounds, emit a zeroed
-	// bone-flag placeholder (no per-bone RLE) and stop -- the runtime then treats
-	// every bone as identity, which is correct for a model whose anim lives elsewhere.
+	// The embedded RLE payload must lie inside the source .rmdl; animated models keep
+	// their clips in separate aseq assets and point animindex past EOF. Out of bounds,
+	// emit a zeroed bone-flag array: every bone reads as identity.
 	const char* const srcBeg = g_model.srcBeg;
 	const char* const srcEnd = g_model.srcEnd;
 	const bool boundsKnown = (srcBeg && srcEnd);

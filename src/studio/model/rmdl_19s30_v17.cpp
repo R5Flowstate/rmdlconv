@@ -77,7 +77,8 @@ inline bool EncOff(size_t v, uint16_t& o)
 		o = static_cast<uint16_t>(v);
 		return true;
 	}
-	if ((v & 0xF) == 0 && (v >> 4) <= 0xFFFE)
+	// Decode is (o & 0xFFFE) << 4, so the shifted form needs 32-byte alignment.
+	if ((v & 0x1F) == 0 && (v >> 4) <= 0xFFFE)
 	{
 		o = static_cast<uint16_t>((v >> 4) | 1);
 		return true;
@@ -585,6 +586,15 @@ private:
 			out.push_back(0);
 	}
 
+	// Keeps a piece that a u16 header offset (relative to `base`) points at encodable past 64 KiB.
+	void PadForHdrRef(std::vector<char>& out, size_t base)
+	{
+		if (out.size() < base || out.size() - base < 0x10000)
+			return;
+		while ((out.size() - base) & 0x1F)
+			out.push_back(0);
+	}
+
 	long long TgtNew(size_t t) const
 	{
 		for (const Piece& p : m_pieces)
@@ -645,7 +655,8 @@ private:
 		}
 	}
 
-	void BoneRec(std::vector<char>& out, int i, bool hasLin, const uint16_t linIdx[8], size_t lb)
+	void BoneRec(std::vector<char>& out, int i, bool hasLin, const uint16_t linIdx[8], size_t lb,
+		std::vector<StructRef>& structRefs)
 	{
 		char rec[kBoneV17] = {};
 		if (hasLin)
@@ -690,7 +701,11 @@ private:
 		rec[124] = static_cast<char>(ci);
 		rec[125] = static_cast<char>(pt);
 		memcpy(rec + 126, &procindex, 2);
+		const size_t recPos = out.size();
 		out.insert(out.end(), rec, rec + kBoneV17);
+		// procindex is relative to the 16-byte S30 bone record; v17 wants it relative to the 128-byte one.
+		if (pt && procindex)
+			structRefs.push_back({ recPos, 126, 2, 1, recPos, bs + DecOff(procindex) });
 	}
 
 	// Rebuild the seq region grouped (all descs, then per-seq blocks).
@@ -1122,6 +1137,7 @@ private:
 				if (k == "bvh")
 				{
 					Need(s, e - s);
+					PadForHdrRef(out, 0);
 					m_new[s] = static_cast<long long>(out.size());
 					out.insert(out.end(), m_in + s, m_in + e);
 					pos = e;
@@ -1178,7 +1194,7 @@ private:
 				PadTo(out, 64);
 				m_new[s] = static_cast<long long>(out.size());
 				for (int i = 0; i < nb; i++)
-					BoneRec(out, i, hasLin, linIdx, lb);
+					BoneRec(out, i, hasLin, linIdx, lb, structRefs);
 			}
 			else if (k == "linear")
 			{
@@ -1225,6 +1241,7 @@ private:
 			else if (k == "bonestate")
 			{
 				PadTo(out, 16);
+				PadForHdrRef(out, 176);
 				m_new[s] = static_cast<long long>(out.size());
 				const int cnt = HRaw(178);
 				Need(s, static_cast<size_t>(cnt) * 2);
@@ -1259,6 +1276,12 @@ private:
 				k == "procbones" || k == "procmap" || k == "uipanels")
 			{
 				Need(s, e - s);
+				if (k == "procbones" || k == "procmap" || k == "uipanels" || k == "followers" || k == "srcbones")
+					PadForHdrRef(out, 0);
+				else if (k == "lods")
+					PadForHdrRef(out, 184);
+				else if (k == "groups")
+					PadForHdrRef(out, 180);
 				m_new[s] = static_cast<long long>(out.size());
 				out.insert(out.end(), m_in + s, m_in + e);
 				RegRefs(k, s, e, m_new[s], structRefs);

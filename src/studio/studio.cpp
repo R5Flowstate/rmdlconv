@@ -243,6 +243,9 @@ void CVertexHardwareDataFile_V1::SetupBoneStateFromDiskFile(vvd::vertexFileHeade
 	}
 }
 
+// Full-float positions need the unpacked-position (_rgdc/_sknc) material variant.
+bool g_vgLargeModel = false;
+
 void CVertexHardwareDataFile_V1::FillFromDiskFiles(r5::v8::studiohdr_t* pHdr, OptimizedModel::FileHeader_t* pVtx, vvd::vertexFileHeader_t* pVVD, vvc::vertexColorFileHeader_t* pVVC, vvw::vertexBoneWeightsExtraFileHeader_t* pVVW)
 {
 	bool isLargeModel = false;
@@ -261,6 +264,8 @@ void CVertexHardwareDataFile_V1::FillFromDiskFiles(r5::v8::studiohdr_t* pHdr, Op
 
 	if (!isLargeModel && (pHdr->hull_min.z < -2047.f || pHdr->hull_max.z > 2047.f))
 		isLargeModel = true;
+
+	g_vgLargeModel = isLargeModel;
 
 	printf("  [VG] isLargeModel = %s (using %s positions)\n",
 		isLargeModel ? "TRUE" : "FALSE",

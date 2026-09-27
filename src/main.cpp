@@ -520,7 +520,7 @@ void BatchConvertModels(const std::string& sourceVersion, const std::string& inp
 		std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
 		// Portal 2 batch accepts .mdl; everything else is .rmdl.
-		const bool wantMdl = (sourceVersion == "49" || sourceVersion == "p2" || sourceVersion == "portal2");
+		const bool wantMdl = (sourceVersion == "49" || sourceVersion == "p2" || sourceVersion == "portal2" || sourceVersion == "53");
 		if (wantMdl)
 		{
 			if (ext != ".mdl")
@@ -562,6 +562,19 @@ void BatchConvertModels(const std::string& sourceVersion, const std::string& inp
 		if (sourceVersion == "8" && targetVersion == 17)
 		{
 			try { ConvertClientModel_8To17(inputFile, outputFile); successCount++; }
+			catch (const std::exception& e) { printf("  ERROR: %s\n", e.what()); failCount++; }
+			continue;
+		}
+
+		// Titanfall 2 (MDL v53): `-targetversion 17` is the S21 client, otherwise the S3 dedi.
+		if (sourceVersion == "53")
+		{
+			try
+			{
+				if (targetVersion == 17) ConvertClientModel_53To17(inputFile, outputFile);
+				else ConvertDediModel_53(inputFile, outputFile);
+				successCount++;
+			}
 			catch (const std::exception& e) { printf("  ERROR: %s\n", e.what()); failCount++; }
 			continue;
 		}
@@ -803,8 +816,8 @@ int main(int argc, char** argv)
         Error("invalid usage\n");
 
 	// Check for batch conversion flags
-	const char* batchVersionFlags[] = { "-v8", "-v49", "-vp2", "-v121", "-v122", "-v123", "-v124", "-v125", "-v13", "-v131", "-v14", "-v141", "-v15", "-v16", "-v17", "-v18", "-v19", "-v191", "-v19s30", nullptr };
-	const char* batchVersionValues[] = { "8", "49", "49", "12.1", "12.2", "12.3", "12.4", "12.5", "13", "13.1", "14", "14.1", "15", "16", "17", "18", "19", "19.1", "19s30", nullptr };
+	const char* batchVersionFlags[] = { "-v8", "-v49", "-vp2", "-v121", "-v122", "-v123", "-v124", "-v125", "-v13", "-v131", "-v14", "-v141", "-v15", "-v16", "-v17", "-v18", "-v19", "-v191", "-v19s30", "-v53", nullptr };
+	const char* batchVersionValues[] = { "8", "49", "49", "12.1", "12.2", "12.3", "12.4", "12.5", "13", "13.1", "14", "14.1", "15", "16", "17", "18", "19", "19.1", "19s30", "53", nullptr };
 
 	printf("[DEBUG] Checking batch flags...\n");
 	fflush(stdout);

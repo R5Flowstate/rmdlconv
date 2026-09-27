@@ -7,6 +7,14 @@
 #include "../../collision/phy_parser.h"
 #include "../../collision/phy_to_bvh4.h"
 #include "../../collision/collision_generator.h"
+#include "../../collision/phy_apex.h"
+
+// Per-bone ragdoll BVH is client-only; stock S3 dedi ragdoll models carry none.
+bool g_mdl53StripSkinnedBvh = false;
+// Any LOD0 vertex weighted to more than one bone: the model draws with the
+// skinned (sknp) material variants, otherwise the rigid (rgdp) ones.
+bool g_mdl53Skinned = false;
+extern bool g_enableAutoGenBVH;
 
 //
 // ConvertStudioHdr
@@ -158,6 +166,7 @@ void ConvertBones_53(r2::mstudiobone_t* pOldBones, int numBones, bool isRig)
 		//newBone->physicsbone = oldBone->physicsbone;
 		newBone->contents = oldBone->contents;
 		newBone->surfacepropLookup = oldBone->surfacepropLookup;
+		newBone->collisionIndex = -1;
 
 		if (!isRig)
 		{
@@ -503,59 +512,67 @@ void ConvertSkins_53(char* pOldSkinData, int numSkinRef, int numSkinFamilies)
 	ALIGN4(g_model.pData);
 }
 
-// i lied it doesnt convert anything it just creates a default ref anim
-void ConvertAnims_53()
+struct PlaceholderSeq
 {
-	r5::v8::mstudioseqdesc_t* seqdesc = reinterpret_cast<r5::v8::mstudioseqdesc_t*>(g_model.pData);
+	std::string label;
+	std::string activity;
+	int actweight;
+};
+
+// Local sequences are bind-pose placeholders: S21 animation comes from the rig's sequences.
+// Stock ragdolled bodies carry 'ref' + 'ragdoll'.
+void ConvertAnims_53(const std::vector<PlaceholderSeq>& seqs)
+{
+	r5::v8::mstudioseqdesc_t* const seqdescs = reinterpret_cast<r5::v8::mstudioseqdesc_t*>(g_model.pData);
 
 	g_model.hdrV54()->localseqindex = g_model.pData - g_model.pBase;
-	g_model.hdrV54()->numlocalseq = 1;
+	g_model.hdrV54()->numlocalseq = static_cast<int>(seqs.size());
+	g_model.pData += sizeof(r5::v8::mstudioseqdesc_t) * seqs.size();
 
-	seqdesc->baseptr = 0;
-	AddToStringTable((char*)seqdesc, &seqdesc->szlabelindex, "ref");
-	AddToStringTable((char*)seqdesc, &seqdesc->szactivitynameindex, "");
-
-	seqdesc->activity = -1;
-
-	seqdesc->bbmin = g_model.hdrV54()->mins;
-	seqdesc->bbmax = g_model.hdrV54()->maxs;
-	seqdesc->groupsize[0] = 1;
-	seqdesc->groupsize[1] = 1;
-	seqdesc->paramindex[0] = -1;
-	seqdesc->paramindex[1] = -1;
-	seqdesc->fadeintime = 0.2;
-	seqdesc->fadeouttime = 0.2;
-
-	// needs to be adjusted if adding more than one anim
-	seqdesc->eventindex = sizeof(*seqdesc);
-	seqdesc->autolayerindex = sizeof(*seqdesc);
-	seqdesc->weightlistindex = sizeof(*seqdesc);
-
-	g_model.pData += sizeof(r5::v8::mstudioseqdesc_t);
-
-	// weightlist
-	for (int i = 0; i < g_model.hdrV54()->numbones; ++i)
+	for (size_t i = 0; i < seqs.size(); i++)
 	{
-		*reinterpret_cast<float*>(g_model.pData) = 1.0f;
+		r5::v8::mstudioseqdesc_t* const seqdesc = &seqdescs[i];
+
+		seqdesc->baseptr = 0;
+		AddToStringTable((char*)seqdesc, &seqdesc->szlabelindex, seqs[i].label.c_str());
+		AddToStringTable((char*)seqdesc, &seqdesc->szactivitynameindex, seqs[i].activity.c_str());
+
+		seqdesc->activity = -1;
+		seqdesc->actweight = seqs[i].actweight;
+
+		seqdesc->bbmin = g_model.hdrV54()->mins;
+		seqdesc->bbmax = g_model.hdrV54()->maxs;
+		seqdesc->groupsize[0] = 1;
+		seqdesc->groupsize[1] = 1;
+		seqdesc->paramindex[0] = -1;
+		seqdesc->paramindex[1] = -1;
+		seqdesc->fadeintime = 0.2;
+		seqdesc->fadeouttime = 0.2;
+
+		const int weightsOffset = static_cast<int>(g_model.pData - (char*)seqdesc);
+		seqdesc->eventindex = weightsOffset;
+		seqdesc->autolayerindex = weightsOffset;
+		seqdesc->weightlistindex = weightsOffset;
+
+		for (int b = 0; b < g_model.hdrV54()->numbones; ++b)
+		{
+			*reinterpret_cast<float*>(g_model.pData) = 1.0f;
+			g_model.pData += sizeof(int);
+		}
+
+		seqdesc->animindexindex = static_cast<int>(g_model.pData - (char*)seqdesc);
+		*reinterpret_cast<int*>(g_model.pData) = seqdesc->animindexindex + sizeof(int);
 		g_model.pData += sizeof(int);
+
+		r5::v8::mstudioanimdesc_t* const animdesc = reinterpret_cast<r5::v8::mstudioanimdesc_t*>(g_model.pData);
+		AddToStringTable((char*)animdesc, &animdesc->sznameindex, ("@" + seqs[i].label).c_str());
+		animdesc->fps = 30;
+		animdesc->flags = STUDIO_ALLZEROS;
+		animdesc->numframes = 1;
+
+		g_model.pData += sizeof(r5::v8::mstudioanimdesc_t);
+		ALIGN4(g_model.pData);
 	}
-
-	seqdesc->animindexindex = g_model.pData - (char*)seqdesc;
-
-	// blend
-	*reinterpret_cast<int*>(g_model.pData) = seqdesc->animindexindex + sizeof(int);
-	g_model.pData += sizeof(int);
-
-	// add animdesc
-	r5::v8::mstudioanimdesc_t* animdesc = reinterpret_cast<r5::v8::mstudioanimdesc_t*>(g_model.pData);
-
-	AddToStringTable((char*)animdesc, &animdesc->sznameindex, "@ref");
-	animdesc->fps = 30;
-	animdesc->flags = STUDIO_ALLZEROS; // no way!!!
-
-	g_model.pData += sizeof(r5::v8::mstudioanimdesc_t);
-	ALIGN4(g_model.pData);
-
 }
 
 #define FILEBUFSIZE (32 * 1024 * 1024)
@@ -604,6 +621,20 @@ void ConvertMDL53To54(char* pMDL, const std::string& pathIn, const std::string& 
 		return;
 	}
 
+	g_mdl53Skinned = false;
+	{
+		const vvd::vertexFileHeader_t* const vvdHeader = reinterpret_cast<const vvd::vertexFileHeader_t*>(vvdBuf.get());
+		const vvd::mstudiovertex_t* const verts = reinterpret_cast<const vvd::mstudiovertex_t*>(vvdBuf.get() + vvdHeader->vertexDataStart);
+		for (int i = 0; i < vvdHeader->numLODVertexes[0]; i++)
+		{
+			if (verts[i].m_BoneWeights.numbones > 1)
+			{
+				g_mdl53Skinned = true;
+				break;
+			}
+		}
+	}
+
 	std::unique_ptr<char[]> vphyBuf;
 	if (oldHeader->phySize > 0)
 	{
@@ -611,6 +642,17 @@ void ConvertMDL53To54(char* pMDL, const std::string& pathIn, const std::string& 
 
 		input.seek(oldHeader->phyOffset, rseekdir::beg);
 		input.read(vphyBuf.get(), oldHeader->phySize);
+	}
+
+	collision::ApexPhy apexPhy;
+	std::vector<uint8_t> apexPhyBytes;
+	if (vphyBuf)
+	{
+		apexPhy = collision::BuildApexPhyFromValve(vphyBuf.get(), oldHeader->phySize);
+		if (apexPhy.valid)
+			apexPhyBytes = collision::WriteApexPhy(apexPhy);
+		else
+			printf("  WARNING: phy kept as Valve/IVP (%s)\n", apexPhy.error.c_str());
 	}
 
 	std::unique_ptr<char[]> vvcBuf;
@@ -676,7 +718,17 @@ void ConvertMDL53To54(char* pMDL, const std::string& pathIn, const std::string& 
 
 	ALIGN4(g_model.pData);
 
-	ConvertAnims_53();
+	std::vector<PlaceholderSeq> placeholderSeqs = { { "ref", "", 0 } };
+	for (int i = 0; i < oldHeader->numlocalseq; i++)
+	{
+		const r2::mstudioseqdesc_t* const seq =
+			reinterpret_cast<const r2::mstudioseqdesc_t*>(pMDL + oldHeader->localseqindex) + i;
+		// Stock models keep only 'ref' and, on ragdolled bodies, 'ragdoll'; clips live on the rig.
+		const std::string label = STRING_FROM_IDX(seq, seq->szlabelindex);
+		if (label == "ragdoll")
+			placeholderSeqs.push_back({ label, STRING_FROM_IDX(seq, seq->szactivitynameindex), seq->actweight });
+	}
+	ConvertAnims_53(placeholderSeqs);
 
 	// convert bodyparts, models, and meshes
 	input.seek(oldHeader->bodypartindex, rseekdir::beg);
@@ -730,10 +782,82 @@ void ConvertMDL53To54(char* pMDL, const std::string& pathIn, const std::string& 
 		collision::GenerationResult collResult;
 		bool collisionGenerated = false;
 
+		// Collision comes from the phy, as in Respawn's own ports: ragdoll models get one part per
+		// solid (bone-local, bone order, bone collisionIndex set), rigid models one part from all
+		// hulls. Models without a phy (viewmodels, arms, cockpits, fx) get none.
+		r5::v8::mstudiobone_t* const bones = reinterpret_cast<r5::v8::mstudiobone_t*>((char*)pHdr + pHdr->boneindex);
+		auto solidBone = [&](const collision::ApexSolid& solid) -> int {
+			for (int b = 0; b < pHdr->numbones; b++)
+				if (solid.boneName == STRING_FROM_IDX(&bones[b], bones[b].sznameindex))
+					return b;
+			return -1;
+		};
+		auto hullMesh = [](collision::MeshData& mesh, const collision::ApexSolid& solid) {
+			for (const auto& hull : solid.hulls)
+			{
+				const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+				for (const auto& v : hull.verts)
+					mesh.vertices.push_back({ v[0], v[1], v[2], 0.f, 0.f, 1.f });
+				std::vector<std::array<uint32_t, 3>> tris;
+				collision::TriangulateHull(hull, tris);
+				for (const auto& t : tris)
+					mesh.triangles.push_back({ base + t[0], base + t[1], base + t[2], 0, 0 });
+			}
+			if (mesh.surfacePropNames.empty())
+				mesh.surfacePropNames.push_back(solid.surfaceProp.empty() ? "default" : solid.surfaceProp);
+		};
+
+		bool ragdoll = false;
+		for (const auto& solid : apexPhy.solids)
+			ragdoll |= solidBone(solid) >= 0;
+
+		const bool skinned = apexPhy.valid;
+		std::vector<collision::MeshData> parts;
+		if (apexPhy.valid && ragdoll && !g_mdl53StripSkinnedBvh)
+		{
+			for (int b = 0; b < pHdr->numbones; b++)
+			{
+				for (const auto& solid : apexPhy.solids)
+				{
+					if (solidBone(solid) != b)
+						continue;
+					collision::MeshData mesh;
+					hullMesh(mesh, solid);
+					bones[b].collisionIndex = static_cast<int>(parts.size());
+					parts.push_back(std::move(mesh));
+					break;
+				}
+			}
+		}
+		else if (apexPhy.valid && !ragdoll)
+		{
+			collision::MeshData mesh;
+			for (const auto& solid : apexPhy.solids)
+				hullMesh(mesh, solid);
+			parts.push_back(std::move(mesh));
+		}
+
+		if (!parts.empty())
+		{
+			collision::CollisionGenerator generator;
+			collResult = generator.GenerateParts(parts);
+			collisionGenerated = collResult.success;
+			if (collisionGenerated)
+			{
+				for (int k = 0; k < 3; k++) { collResult.boundsMin[k] = pHdr->hull_min[k]; collResult.boundsMax[k] = pHdr->hull_max[k]; }
+				printf("  phy collision: %zu part(s), %u triangles\n", parts.size(), collResult.triangleCount);
+			}
+			else
+				printf("  ERROR: phy collision failed: %s\n", collResult.errorMessage.c_str());
+		}
+
+		// Models that ship no phy get no collision unless -autogenbvh asks for a visual-mesh one.
+		const bool meshCollision = !apexPhy.valid && g_enableAutoGenBVH;
+
 		// =========================================================================
 		// PRIMARY: Generate collision from visual mesh (LOD0) - more reliable
 		// =========================================================================
-		if (vtxBuf && vvdBuf)
+		if (meshCollision && vtxBuf && vvdBuf)
 		{
 			printf("  generating collision from LOD0 visual mesh...\n");
 
@@ -918,7 +1042,7 @@ void ConvertMDL53To54(char* pMDL, const std::string& pathIn, const std::string& 
 		// =========================================================================
 		// FALLBACK: Generate collision from PHY data if visual mesh failed
 		// =========================================================================
-		if (!collisionGenerated && vphyBuf && oldHeader->phySize > 0)
+		if (!skinned && meshCollision && !collisionGenerated && vphyBuf && oldHeader->phySize > 0)
 		{
 			printf("  falling back to PHY collision conversion...\n");
 
@@ -1035,6 +1159,9 @@ void ConvertMDL53To54(char* pMDL, const std::string& pathIn, const std::string& 
 		}
 	}
 
+	if (!apexPhyBytes.empty())
+		pHdr->phySize = static_cast<int>(apexPhyBytes.size());
+
 	pHdr->length = g_model.pData - g_model.pBase;
 
 	out.write(g_model.pBase, pHdr->length);
@@ -1052,10 +1179,13 @@ void ConvertMDL53To54(char* pMDL, const std::string& pathIn, const std::string& 
 
 		if (phyOut.is_open())
 		{
-			phyOut.write(vphyBuf.get(), oldHeader->phySize);
+			if (!apexPhyBytes.empty())
+				phyOut.write(reinterpret_cast<const char*>(apexPhyBytes.data()), apexPhyBytes.size());
+			else
+				phyOut.write(vphyBuf.get(), oldHeader->phySize);
 			phyOut.close();
 
-			printf("  wrote external .phy file (%d bytes)\n", oldHeader->phySize);
+			printf("  wrote external .phy file (%d bytes, %s)\n", pHdr->phySize, apexPhyBytes.empty() ? "Valve/IVP" : "Apex geoms");
 
 			// Header already configured:
 			// - pHdr->phyOffset = -123456 (external file sentinel)

@@ -19,8 +19,7 @@
 #pragma once
 #include <studio/studio.h>
 
-// Macro for offset conversion - v19.1 uses direct byte offsets
-// (Previously multiplied by 2, but binary analysis proved this incorrect)
+// v19.1 stores direct byte offsets.
 #ifndef FIX_OFFSET
 #define FIX_OFFSET(x) (x)
 #endif

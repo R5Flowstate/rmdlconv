@@ -1452,9 +1452,7 @@ void ConvertRMDL122To10(char* pMDL, const std::string& pathIn, const std::string
 
 	r5::v122::studiohdr_t* oldHeader = input.get<r5::v122::studiohdr_t>();
 
-	// [RLE-BOUNDS] publish the source .rmdl extent so the shared embedded-anim
-	// converter (ConvertAnimation) can reject dangling animindex offsets instead of
-	// reading past EOF and overrunning the output buffer. length == file size.
+	// Source extent for ConvertAnimation, which rejects animindex offsets past EOF.
 	g_model.srcBeg = pMDL;
 	g_model.srcEnd = pMDL + oldHeader->length;
 

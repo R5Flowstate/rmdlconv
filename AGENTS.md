@@ -23,6 +23,8 @@ Folder flags take a **directory**. `-convertmodel` takes one file.
 | `-v122 … -targetversion 17` | S10/TF2-era → S21 client v17 |
 | `-v8 … -targetversion 17` | S3 v8 → S21 v17 |
 | `-v49 … -targetversion 17` | Portal 2 / TF2 `.mdl` → S21 v17 |
+| `-v53 <src> <out> -targetversion 17` | Titanfall 2 `.mdl` (IDST 53) → S21 v17: Apex geoms `.phy`, one BVH part per ragdoll bone, jiggle bones, `ref`/`ragdoll` placeholders |
+| `-v53 <src> <out>` | Titanfall 2 `.mdl` → S3 dedi v54; skinned models carry no BVH (stock S3 has none) |
 | `-v191 <src> <out>` | v19.1 → v17 compact (seqdesc/animdesc shrink) |
 | `-v19s30 <src> <out> -targetversion 17` | newer-season mdl_ v19 (244B hdr, 16B insert @180) → S21 v17; stored VG per-group Oodle blocks are decompressed and concatenated to rev4 |
 | `-v19s30 <src> <out>` | same source → dedi v54 (via a temp v17) |

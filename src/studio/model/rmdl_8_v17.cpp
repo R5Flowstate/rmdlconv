@@ -119,13 +119,17 @@ static uint64_t RTech_StringToGuid(const char* const pString)
 	return v12 + v11 - 0xAE502812AA7333ull * static_cast<uint64_t>(idx);
 }
 
+// Set while converting a Titanfall 2 model: its texture names are bare material
+// paths, and Apex material assets carry the shader-type suffix.
+static const char* s_materialSuffix = nullptr;
+
 static uint64_t MaterialPathToGuid(const char* const pSrcPath)
 {
 	std::string path(pSrcPath ? pSrcPath : "");
 	for (char& c : path)
 		if (c == '\\') c = '/';
 
-	std::string full = "material/" + path + ".rpak";
+	std::string full = "material/" + path + (s_materialSuffix ? s_materialSuffix : "") + ".rpak";
 	full.append(8, '\0');
 	return RTech_StringToGuid(full.c_str());
 }
@@ -196,8 +200,21 @@ static size_t ExpandCollisionV8ToV170(const char* const src, const size_t srcSiz
 		return srcSize;
 	}
 
+	const r5::v8::mstudiocollheader_t* const srcH =
+		reinterpret_cast<const r5::v8::mstudiocollheader_t*>(src + sizeof(r5::v8::mstudiocollmodel_t));
+
+	// The engine reads BVH nodes with aligned SIMD loads; growing the headers by
+	// 8 bytes each would leave them 8-aligned, so pad in front of the node array.
+	size_t nodeStart = srcSize;
+	for (int i = 0; i < headerCount; i++)
+	{
+		if (srcH[i].bvhNodeIndex >= static_cast<int>(hdrEndV8) && static_cast<size_t>(srcH[i].bvhNodeIndex) < nodeStart)
+			nodeStart = static_cast<size_t>(srcH[i].bvhNodeIndex);
+	}
+	const int nodePad = static_cast<int>((16 - ((nodeStart + delta) & 15)) & 15);
+
 	const size_t tailSize = srcSize - hdrEndV8;
-	const size_t outSize  = hdrEndV120 + tailSize;
+	const size_t outSize  = hdrEndV120 + tailSize + nodePad;
 	if (outSize > dstCap)
 	{
 		printf("[v17/8]   WARNING: '%s' coll expand overflow (%zu > %zu).\n", modelName, outSize, dstCap);
@@ -210,6 +227,7 @@ static size_t ExpandCollisionV8ToV170(const char* const src, const size_t srcSiz
 	ncm->headerCount = headerCount;
 	auto rebase = [&](int off) -> int {
 		if (off <= 0) return off;
+		if (off >= static_cast<int>(nodeStart)) return off + delta + nodePad;
 		return off >= static_cast<int>(hdrEndV8) ? off + delta : off;
 	};
 	ncm->contentMasksIndex = rebase(cm->contentMasksIndex);
@@ -227,7 +245,8 @@ static size_t ExpandCollisionV8ToV170(const char* const src, const size_t srcSiz
 		newH[i].bvhNodeIndex         = rebase(oldH[i].bvhNodeIndex);
 		newH[i].vertIndex            = rebase(oldH[i].vertIndex);
 		newH[i].bvhLeafIndex         = rebase(oldH[i].bvhLeafIndex);
-		newH[i].surfacePropDataIndex = 0;
+		// Stock models point the (empty) per-part surfaceprop array at the part's vertices.
+		newH[i].surfacePropDataIndex = newH[i].vertIndex;
 		newH[i].surfacePropArrayCount = 0;
 		newH[i].surfacePropCount     = 0;
 		newH[i].padding_maybe        = 0;
@@ -237,10 +256,12 @@ static size_t ExpandCollisionV8ToV170(const char* const src, const size_t srcSiz
 		newH[i].scale                = oldH[i].scale;
 	}
 
-	memcpy(dst + hdrEndV120, src + hdrEndV8, tailSize);
+	const size_t preNodes = nodeStart - hdrEndV8;
+	memcpy(dst + hdrEndV120, src + hdrEndV8, preNodes);
+	memcpy(dst + hdrEndV120 + preNodes + nodePad, src + nodeStart, srcSize - nodeStart);
 
-	printf("[v17/8]   coll expand: %d part(s), %zu -> %zu bytes (+%d header pad)\n",
-		headerCount, srcSize, outSize, delta);
+	printf("[v17/8]   coll expand: %d part(s), %zu -> %zu bytes (+%d header pad, +%d node pad)\n",
+		headerCount, srcSize, outSize, delta, nodePad);
 	return outSize;
 }
 
@@ -293,9 +314,6 @@ void ConvertRMDL8To17(char* pMDL, const size_t fileSize, const std::string& path
 		numskinref, numskinfamilies, meshCount, oldHdr->numlocalattachments,
 		numbones > 0 ? "yes" : "no");
 
-	if (oldHdr->procBoneCount > 0)
-		printf("[v17/8]   WARNING: '%s' has %d procedural (jiggle) bones -- proc-rule relocation NOT implemented.\n",
-			rawModelName.c_str(), oldHdr->procBoneCount);
 	if (oldHdr->numikchains > 0)
 		printf("[v17/8]   WARNING: '%s' has %d ikchains -- ikchain/link relocation NOT implemented.\n",
 			rawModelName.c_str(), oldHdr->numikchains);
@@ -968,6 +986,33 @@ void ConvertRMDL8To17(char* pMDL, const size_t fileSize, const std::string& path
 		o.cur += sizeof(r5::v160::mstudiobonedata_t);
 	}
 
+	// 15a) jiggle bones: v8 and v17 share the 124-byte record; procindex is relative to the
+	// 128-byte bone-data record. The proc-bone list and the per-bone proc map follow the records.
+	if (oldHdr->procBoneCount > 0)
+	{
+		Align(o, 4);
+		for (int i = 0; i < numbones; i++)
+		{
+			const r5::v8::mstudiobone_t* const ob =
+				reinterpret_cast<const r5::v8::mstudiobone_t*>(pMDL + oldHdr->boneindex) + i;
+			if (!ob->proctype || !ob->procindex)
+				continue;
+			const size_t rec = boneDataStart + static_cast<size_t>(i) * sizeof(r5::v160::mstudiobonedata_t);
+			memcpy(o.base + o.cur, reinterpret_cast<const char*>(ob) + ob->procindex, sizeof(r5::v8::mstudiojigglebone_t));
+			SetSubOff(o, rec, rec + offsetof(r5::v160::mstudiobonedata_t, procindex), o.cur);
+			o.cur += sizeof(r5::v8::mstudiojigglebone_t);
+		}
+
+		SetHdrOff(o, offsetof(r5::v170::studiohdr_t, procBoneOffset), o.cur);
+		memcpy(o.base + o.cur, pMDL + oldHdr->procBoneTableOffset, static_cast<size_t>(oldHdr->procBoneCount));
+		o.cur += static_cast<size_t>(oldHdr->procBoneCount);
+		SetHdrOff(o, offsetof(r5::v170::studiohdr_t, linearProcBoneOffset), o.cur);
+		memcpy(o.base + o.cur, pMDL + oldHdr->linearProcBoneOffset, static_cast<size_t>(numbones));
+		o.cur += static_cast<size_t>(numbones);
+		nh->procBoneCount = static_cast<uint16_t>(oldHdr->procBoneCount);
+		Align(o, 4);
+	}
+
 	// 15b) linearbone
 	// linearboneindex is header-relative; sub-offsets are struct-relative to the linearbone base.
 	// v16/v17 parent is int16; no scale/qalignment arrays (v19.1+ only).
@@ -1331,7 +1376,9 @@ size_t ConvertVGData_Rev1To17(char* inputBuf, const size_t inputSize, const std:
 			}
 			nm->vertBoneCount = maxBones;
 			nm->indexCount = static_cast<uint32_t>(rec.src->indexCount) & 0x0FFFFFFFu;
-			nm->indexType  = 0;
+			// rev1 has no index type; its indices are 16-bit triangle lists (type 1). The
+			// engine derives the index element size from this field.
+			nm->indexType  = 1;
 
 			cur = Align16(cur);
 			nm->indexOffset = static_cast<uint32_t>(cur - (meshAbs + offsetof(vg::rev4::MeshHeader_t, indexOffset)));
@@ -1531,6 +1578,65 @@ void ConvertClientModel_8To17(const std::string& inputFile, const std::string& o
 // ConvertClientModel_49To17
 // Portal 2 (MDL v49) -> v8 intermediate via existing ConvertMDL49To54, then v8->v17.
 //
+extern bool g_mdl53StripSkinnedBvh;
+extern bool g_mdl53Skinned;
+extern bool g_vgLargeModel;
+
+static std::unique_ptr<char[]> ReadWholeFile(const std::string& path)
+{
+	const uintmax_t size = GetFileSize(path);
+	std::unique_ptr<char[]> buf(new char[size]);
+	std::ifstream ifs(path, std::ios::in | std::ios::binary);
+	ifs.read(buf.get(), size);
+	return buf;
+}
+
+// Titanfall 2 MDL v53 -> S21 CLIENT v17 via a v8 intermediate that keeps the per-bone BVH.
+void ConvertClientModel_53To17(const std::string& inputFile, const std::string& outputFile)
+{
+	printf("[v17/53] Titanfall 2 MDL53 -> v17 via v8 intermediate: %s\n", inputFile.c_str());
+
+	const std::filesystem::path outPath(outputFile);
+	const std::filesystem::path tempDir = outPath.parent_path() / "_v8_tmp";
+	std::filesystem::create_directories(tempDir);
+	const std::string tempRmdl = ChangeExtension((tempDir / outPath.filename()).string(), "rmdl");
+
+	std::unique_ptr<char[]> pMDL = ReadWholeFile(inputFile);
+	g_mdl53StripSkinnedBvh = false;
+	ConvertMDL53To54(pMDL.get(), inputFile, tempRmdl);
+	// Animation-only models produce no mesh; their clips go through R5-AnimConv.
+	if (!FILE_EXISTS(tempRmdl))
+	{
+		printf("[v17/53]   no model produced (animation-only source) -- skipped\n");
+		std::error_code ec;
+		std::filesystem::remove_all(tempDir, ec);
+		return;
+	}
+
+	if (g_mdl53Skinned)
+		s_materialSuffix = g_vgLargeModel ? "_sknc" : "_sknp";
+	else
+		s_materialSuffix = g_vgLargeModel ? "_rgdc" : "_rgdp";
+	printf("[v17/53]   material variant %s\n", s_materialSuffix);
+	ConvertClientModel_8To17(tempRmdl, outputFile);
+	s_materialSuffix = nullptr;
+
+	std::error_code ec;
+	std::filesystem::remove_all(tempDir, ec);
+}
+
+// Titanfall 2 MDL v53 -> S3 DEDI v54 (subversion 10). Ragdoll models ship without a BVH,
+// matching the stock S3 titan_buddy.
+void ConvertDediModel_53(const std::string& inputFile, const std::string& outputFile)
+{
+	printf("[dedi/53] Titanfall 2 MDL53 -> v54: %s\n", inputFile.c_str());
+	std::filesystem::create_directories(std::filesystem::path(outputFile).parent_path());
+	std::unique_ptr<char[]> pMDL = ReadWholeFile(inputFile);
+	g_mdl53StripSkinnedBvh = true;
+	ConvertMDL53To54(pMDL.get(), inputFile, ChangeExtension(outputFile, "rmdl"));
+	g_mdl53StripSkinnedBvh = false;
+}
+
 void ConvertClientModel_49To17(const std::string& inputFile, const std::string& outputFile)
 {
 	printf("[v17/49] Portal 2 / MDL49 -> v17 via v8 intermediate: %s\n", inputFile.c_str());

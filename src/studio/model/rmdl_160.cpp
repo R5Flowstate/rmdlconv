@@ -232,9 +232,8 @@ static void ConvertVGData_160(const char* vgInputBuf, uintmax_t vgInputSize, con
 		return;
 	}
 
-	// .vg read-bounds guard: every source ptr we deref/copy from MUST land inside
-	// [vgInputBuf, vgEnd). A wild mesh offset reading past the buffer would AV; we
-	// report+skip instead of faulting (defensive hardening, same class as the RLE fix).
+	// Every source read must land inside [vgInputBuf, vgEnd); a mesh offset outside it
+	// is reported and skipped.
 	const char* const vgBeg = vgInputBuf;
 	const char* const vgEnd = vgInputBuf + vgInputSize;
 	auto VG_RD_OK = [&](const void* p, size_t len) -> bool {
@@ -891,18 +890,13 @@ static void BvhNodeChild(const BvhPartCtx& part, int nodeIdx, int childI,
 // meshGroupIdx in the surface-prop row's byte+2, plus a per-leaf low-11-bit
 // row selector and a 1-bit "sel" (dword bit 11) that the engine resolves
 // through a per-part skinInfos[] indirection at runtime (Coll_FinalizeSurfProp).
-// The S21 binary still carries both the LEGACY and MODERN branches of this
-// resolver -- S21 didn't drop the legacy path, it just stopped being the common case.
-// The old S3 target engine only understands the LEGACY encoding: byte+2 of the
-// row IS the final surfaceproperties.rson id, addressed by the FULL 12-bit
-// leaf selector with no indirection at all. rmdlconv previously copied the
-// row table and leaf words verbatim, which fed the S3 dedi raw meshGroupIdx
-// values as if they were surface-type ids -- garbage climbable/footsteps/
-// impacts/water on every modern-encoded model.
+// S21 resolves both the LEGACY and MODERN encodings. The S3 engine only reads
+// LEGACY: byte+2 of the row is the final surfaceproperties.rson id, addressed by
+// the full 12-bit leaf selector with no indirection. Copied verbatim, the modern
+// rows would hand S3 meshGroupIdx values as surface ids.
 //
-// This pass evaluates the modern encoding OFFLINE (once, at convert time) and
-// re-emits the legacy encoding the S3 engine can read directly, so no runtime
-// engine change is needed on the dedi side.
+// This pass evaluates the modern encoding at convert time and re-emits the
+// legacy encoding.
 //
 // Per-part branch (mirrors the live resolver exactly):
 //   LEGACY (meshGroupCount==0, skinCount==0 treated the same):
@@ -977,10 +971,8 @@ static int VoteLeafSurfaceId(const uint16_t zUpInfo, const uint8_t surfTypeID[2]
 			++votes0;
 	}
 
-	// Ties (votes1 == votes0, common on 2- and 4-poly leaves) resolve to the
-	// leaf's baked bit11 selector, per the spec's tie-break clause -- NOT to a
-	// fixed side (a fixed-0 tie-break flipped every baked-sel=1 tied leaf to
-	// the wrong id).
+	// Ties (common on 2- and 4-poly leaves) resolve to the leaf's baked bit11
+	// selector, not to a fixed side.
 	int majoritySel;
 	if (votes1 > votes0)
 		majoritySel = 1;
@@ -997,8 +989,7 @@ static int VoteLeafSurfaceId(const uint16_t zUpInfo, const uint8_t surfTypeID[2]
 // `visit(leafDwordIdx, ctype)` for every DISTINCT leaf reached, regardless of
 // ctype. Multiple node children can reference the same leaf dword (shared
 // leaves), so a visited-set keyed on the leaf dword index guarantees each leaf
-// is visited exactly once -- keeping the remap list duplicate-free and the
-// [COLL-SURF] "leaves remapped" count truthful.
+// is visited exactly once, keeping the remap list and its count duplicate-free.
 // Mirrors the live dispatch: ctype 0 = recurse into nodes[childIdx], 1 = skip,
 // 3 = bundle (dword at childIdx is a count N, followed by N entry headers
 // `hd` [ctype=(hd>>8)&0xFF, dlen=(hd>>16)&0xFFFF], entries' payloads start
@@ -1911,10 +1902,8 @@ static void ConvertSequences_160(const r5::v160::studiohdr_t* pOldHdr, const cha
 	if (numSeqs == 0)
 		return;
 
-	// [RLE-BOUNDS] source .rmdl buffer extent. Every source read below (esp. the RLE
-	// anim payload at oldAnimDesc->animindex) MUST stay inside this. "ref"/static-prop
-	// sequences dangle animindex past EOF; reading it is an OOB read that crashes
-	// non-deterministically (heap-state dependent).
+	// Every source read below must stay inside the .rmdl: "ref" and static-prop
+	// sequences carry an animindex past EOF.
 	const char* const srcBeg = pOldData;
 	const char* const srcEnd = pOldData + fileSize;
 
@@ -2166,9 +2155,8 @@ static void ConvertSequences_160(const r5::v160::studiohdr_t* pOldHdr, const cha
 				int rleNumBones = g_model.hdrV54()->numbones;
 				int rleFlagSize = ((4 * rleNumBones + 7) / 8 + 1) & 0xFFFFFFFE;
 
-				// [RLE-BOUNDS] only copy embedded RLE when its bone-flag array actually lies
-				// inside the source buffer. A dangling animindex (real RLE lives elsewhere,
-				// e.g. "ref" static-prop seqs) reads past EOF -> heap-state-dependent crash.
+				// Copy embedded RLE only when its bone-flag array lies inside the source;
+				// "ref" static-prop sequences point past EOF.
 				bool rleInBounds = pV16AnimData
 					&& pV16AnimData >= srcBeg && pV16AnimData + rleFlagSize <= srcEnd;
 
@@ -3157,8 +3145,7 @@ void ConvertRMDL160To10(char* pMDL, const size_t fileSize, const std::string& pa
 
 	// Convert bone followers. Animated props (loot bins, doors, animated containers) attach their
 	// .phy solids to MOVING bones via this array; the S3 dedi spawns a physics shadow per followed
-	// bone so the collision tracks the animation. ConvertRMDL160To10 previously dropped it, leaving
-	// boneFollowerCount=0 -> no server collision (walk-through). v160 stores u16 count/offset + a
+	// bone so the collision tracks the animation; without it the prop has no server collision. v160 stores u16 count/offset + a
 	// u16[] of bone indices; v8 stores int count/offset + int[]. ConvertBones_160 preserves bone
 	// order 1:1, so the indices stay valid.
 	if (oldHeader->boneFollowerCount > 0 &&

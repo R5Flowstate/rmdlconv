@@ -210,6 +210,87 @@ namespace collision
         return mesh;
     }
 
+    GenerationResult CollisionGenerator::GenerateParts(const std::vector<MeshData>& parts)
+    {
+        GenerationResult result;
+        if (parts.empty())
+        {
+            result.errorMessage = "No collision parts";
+            return result;
+        }
+
+        struct Built { std::vector<uint8_t> blob; int32_t nodes, verts, leaf; float decode[4]; };
+        std::vector<Built> built;
+        for (size_t i = 0; i < parts.size(); i++)
+        {
+            GenerationResult one = Generate(parts[i]);
+            if (!one.success)
+            {
+                result.errorMessage = "part " + std::to_string(i) + ": " + one.errorMessage;
+                return result;
+            }
+            Built b;
+            b.blob = std::move(one.collisionData);
+            const int32_t* hdr = reinterpret_cast<const int32_t*>(b.blob.data() + 16);
+            b.nodes = hdr[1]; b.verts = hdr[2]; b.leaf = hdr[3];
+            memcpy(b.decode, b.blob.data() + 32, sizeof(b.decode));
+            result.nodeCount += one.nodeCount;
+            result.leafCount += one.leafCount;
+            result.triangleCount += one.triangleCount;
+            built.push_back(std::move(b));
+        }
+
+        // Surface props / contents / names are identical across parts: take part 0's block.
+        const int32_t* cm0 = reinterpret_cast<const int32_t*>(built[0].blob.data());
+        const size_t oldTable = 16 + 32;
+        const size_t newTable = 16 + 32 * built.size();
+        const size_t sharedSize = static_cast<size_t>(built[0].verts) - oldTable;
+        const int32_t shift = static_cast<int32_t>(newTable) - static_cast<int32_t>(oldTable);
+
+        auto align64 = [](size_t v) { return (v + 63) & ~static_cast<size_t>(63); };
+        std::vector<uint8_t>& out = result.collisionData;
+        out.assign(newTable, 0);
+        out.insert(out.end(), built[0].blob.begin() + oldTable, built[0].blob.begin() + oldTable + sharedSize);
+
+        int32_t* cm = reinterpret_cast<int32_t*>(out.data());
+        cm[0] = cm0[0] + shift;
+        cm[1] = cm0[1] + shift;
+        cm[2] = cm0[2] + shift;
+        cm[3] = static_cast<int32_t>(built.size());
+
+        std::vector<size_t> vOfs(built.size()), lOfs(built.size()), nOfs(built.size());
+        for (size_t i = 0; i < built.size(); i++)
+        {
+            const Built& b = built[i];
+            out.resize(align64(out.size()), 0);
+            vOfs[i] = out.size();
+            out.insert(out.end(), b.blob.begin() + b.verts, b.blob.begin() + b.leaf);
+            out.resize(align64(out.size()), 0);
+            lOfs[i] = out.size();
+            out.insert(out.end(), b.blob.begin() + b.leaf, b.blob.begin() + b.nodes);
+        }
+        for (size_t i = 0; i < built.size(); i++)
+        {
+            const Built& b = built[i];
+            out.resize(align64(out.size()), 0);
+            nOfs[i] = out.size();
+            out.insert(out.end(), b.blob.begin() + b.nodes, b.blob.end());
+        }
+
+        for (size_t i = 0; i < built.size(); i++)
+        {
+            int32_t* hdr = reinterpret_cast<int32_t*>(out.data() + 16 + 32 * i);
+            hdr[0] = 1;
+            hdr[1] = static_cast<int32_t>(nOfs[i]);
+            hdr[2] = static_cast<int32_t>(vOfs[i]);
+            hdr[3] = static_cast<int32_t>(lOfs[i]);
+            memcpy(out.data() + 16 + 32 * i + 16, built[i].decode, sizeof(built[i].decode));
+        }
+
+        result.success = true;
+        return result;
+    }
+
     //=========================================================================
     // Utility Functions
     //=========================================================================

@@ -2322,10 +2322,9 @@ void ConvertRMDL191To10(char* pMDL, const size_t fileSize, const std::string& pa
 		ALIGN4(g_model.pData);
 	}
 
-	// Convert bone followers (animated-prop collision). Same fix as ConvertRMDL160To10: the v19.1
-	// source stores u16 count/offset + a u16[] of bone indices; the v8 dedi header stores int
-	// count/offset + int[]. ConvertBones_191 preserves bone order 1:1, so the indices stay valid.
-	// Without this, animated props (loot bins, doors) get boneFollowerCount=0 -> no server collision.
+	// Bone followers (animated-prop collision), as in ConvertRMDL160To10: the v19.1 source stores
+	// u16 count/offset + u16[] bone indices, the v8 dedi header int count/offset + int[].
+	// ConvertBones_191 preserves bone order, so the indices stay valid.
 	if (oldHeader->boneFollowerCount > 0 &&
 		oldHeader->boneFollowerOffset > 0 && oldHeader->boneFollowerOffset < fileSize)
 	{

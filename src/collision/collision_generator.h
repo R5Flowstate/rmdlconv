@@ -98,6 +98,9 @@ namespace collision
         // Generate from mesh data
         GenerationResult Generate(const MeshData& mesh);
 
+        // One collision part per mesh (e.g. one per ragdoll bone), in the given order.
+        GenerationResult GenerateParts(const std::vector<MeshData>& parts);
+
         // Generate from raw arrays (for integration with existing code)
         GenerationResult Generate(
             const float* vertices,      // xyz triplets

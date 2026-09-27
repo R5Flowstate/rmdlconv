@@ -167,6 +167,8 @@ size_t ConvertVGData_Rev1To17(char* inputBuf, const size_t inputSize, const std:
 void ConvertClientModel_8To17(const std::string& inputFile, const std::string& outputFile);
 // Portal 2 MDL v49 -> v8 intermediate (ConvertMDL49To54) -> v17.
 void ConvertClientModel_49To17(const std::string& inputFile, const std::string& outputFile);
+void ConvertClientModel_53To17(const std::string& inputFile, const std::string& outputFile);
+void ConvertDediModel_53(const std::string& inputFile, const std::string& outputFile);
 
 // conversion to mdl v53
 void ConvertMDL52To53(char* pMDL, const std::string& pathIn, const std::string& pathOut);

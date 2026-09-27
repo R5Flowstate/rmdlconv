@@ -215,7 +215,7 @@ namespace collision
         // model-physics builder branches on the phyheader id: id=0 -> the legacy IVP loader
         // (VCollideLoad) builds REAL CPhysCollide solids; id>=1 (Apex geoms) yields no solids
         // and the server drops every prop_physics/ragdoll ("No physics object ... Removing.").
-        // Emitting id=0 with proper IVP compact-surfaces is the root-cause fix. keyValues is the
+        // So this emits id=0 with IVP compact surfaces. keyValues is the
         // original Apex keyvalue text block (preserved verbatim so mass/constraints survive); may
         // be null/empty. Returns an empty vector if no usable convex solid could be built (caller
         // should then fall back to the legacy id=1 verbatim copy so the convert never fails).
