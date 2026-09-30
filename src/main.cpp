@@ -389,6 +389,7 @@ const char* pszBatchHelpString = {
 	"  -v8     Model v8 (S0-S6 / S3-legacy); add -targetversion 17 for S21 client\n"
 	"  -v49    Portal 2 MDL v49; requires -targetversion 17 for S21 client\n"
 	"  -vp2    alias for -v49\n"
+	"  -vertexcolor  meshes without a VVC get a white COLOR0 stream\n"
 	"  -v121   Model v12.1 (S7-8)\n"
 	"  -v122   Model v12.2 (S9-11); add -targetversion 17 for S21 client\n"
 	"  -v123   Model v12.3 (transition)\n"
@@ -799,6 +800,14 @@ int main(int argc, char** argv)
 		g_enableAutoGenBVH = true;
 		printf("[INFO] -autogenbvh enabled: v160 static props without inline BVH "
 			"will get an auto-generated BVH4 from their .vg LOD0 mesh.\n");
+		fflush(stdout);
+	}
+
+	if (cmdline.HasParam("-vertexcolor"))
+	{
+		extern bool g_vgForceColor;
+		g_vgForceColor = true;
+		printf("[INFO] -vertexcolor enabled: meshes without a VVC get a white COLOR0 stream.\n");
 		fflush(stdout);
 	}
 

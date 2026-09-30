@@ -245,6 +245,8 @@ void CVertexHardwareDataFile_V1::SetupBoneStateFromDiskFile(vvd::vertexFileHeade
 
 // Full-float positions need the unpacked-position (_rgdc/_sknc) material variant.
 bool g_vgLargeModel = false;
+// Sources without a VVC get an identity-white COLOR0 stream; some S21 vertex shaders require it.
+bool g_vgForceColor = false;
 
 void CVertexHardwareDataFile_V1::FillFromDiskFiles(r5::v8::studiohdr_t* pHdr, OptimizedModel::FileHeader_t* pVtx, vvd::vertexFileHeader_t* pVVD, vvc::vertexColorFileHeader_t* pVVC, vvw::vertexBoneWeightsExtraFileHeader_t* pVVW)
 {
@@ -277,7 +279,7 @@ void CVertexHardwareDataFile_V1::FillFromDiskFiles(r5::v8::studiohdr_t* pHdr, Op
 	defaultMeshFlags |= VERTEX_HAS_UNK2;
 	defaultMeshFlags |= VERTEX_HAS_UV1;
 
-	if (pHdr->flags & STUDIOHDR_FLAGS_USES_VERTEX_COLOR)
+	if ((pHdr->flags & STUDIOHDR_FLAGS_USES_VERTEX_COLOR) || g_vgForceColor)
 		defaultMeshFlags |= VERTEX_HAS_COLOR;
 
 	if (pHdr->flags & STUDIOHDR_FLAGS_USES_UV2)
@@ -402,6 +404,10 @@ void CVertexHardwareDataFile_V1::FillFromDiskFiles(r5::v8::studiohdr_t* pHdr, Op
 							{
 								newHwVert.m_color = *pVvcColors[localVertOffset + pVtxVert->origMeshVertID];
 								newHwVert.m_vecTexCoord2 = *pVvcUv2s[localVertOffset + pVtxVert->origMeshVertID];
+							}
+							else
+							{
+								newHwVert.m_color = Color32(255, 255, 255, 255);
 							}
 
 							// skip our weights if we don't have flags for it
