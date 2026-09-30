@@ -45,6 +45,9 @@ void ConvertStudioHdr(r5::v8::studiohdr_t* out, studiohdr_t* hdr)
 	// STUDIOHDR_FLAGS_NO_FORCED_FADE (0x800) - Prevent distance-based fade-out
 	out->flags |= 0x10;   // STATIC_PROP
 	out->flags |= 0x800;  // NO_FORCED_FADE
+	// USES_ENV_CUBEMAP and USES_BUMPMAPPING, as every Apex prop carries them. The
+	// client only builds a lighting state for a model with 0x2 (or AMBIENT_BOOST).
+	out->flags |= STUDIOHDR_FLAGS_USES_ENV_CUBEMAP | STUDIOHDR_FLAGS_USES_BUMPMAPPING;
 
 	//-| begin count vars
 	out->numbones = hdr->numbones;
