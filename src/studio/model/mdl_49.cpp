@@ -43,7 +43,9 @@ void ConvertStudioHdr(r5::v8::studiohdr_t* out, studiohdr_t* hdr)
 	// Without these flags, large models glitch due to forced fade-out and wrong rendering path
 	// STUDIOHDR_FLAGS_STATIC_PROP (0x10) - Use static prop rendering (RGDP shader)
 	// STUDIOHDR_FLAGS_NO_FORCED_FADE (0x800) - Prevent distance-based fade-out
-	out->flags |= 0x10;   // STATIC_PROP
+	// Multi-bone models animate through a virtual model, which STATIC_PROP disables.
+	if (hdr->numbones <= 1)
+		out->flags |= 0x10;   // STATIC_PROP
 	out->flags |= 0x800;  // NO_FORCED_FADE
 	// USES_ENV_CUBEMAP and USES_BUMPMAPPING, as every Apex prop carries them. The
 	// client only builds a lighting state for a model with 0x2 (or AMBIENT_BOOST).
