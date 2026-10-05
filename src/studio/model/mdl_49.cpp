@@ -514,59 +514,166 @@ void ConvertSkins_49(char* pOldSkinData, int numSkinRef, int numSkinFamilies)
 	ALIGN4(g_model.pData);
 }
 
-// i lied it doesnt convert anything it just creates a default ref anim
-void ConvertAnims_49()
+// Source v49 sequence descriptors are converted (label, activity, flags, fps,
+// numframes, blend group). A byte copy of mstudioanimdesc_t::animindex is not
+// possible: that field is a byte offset to a Source mstudio_rle_anim_t chain
+// (studio.h r1::mstudio_rle_anim_t, line 1438; STUDIO_ANIM_RAWROT = 0x02 and
+// STUDIO_ANIM_ANIMROT = 0x08 valueptr, lines 1428-1431). ConvertAnimation
+// (studio.h line 5716) only memcpy's an R5 bone-nibble RLE block
+// (r5::STUDIO_ANIM_RAWROT = 0x04, studio.h line 2322). rmdl_8_v17.cpp line 647
+// then forces ad->animindex = 0 and the EOF patch at line 1162 replaces every
+// animindex with a sentinel, because playable curves are aseq v11.
+static const int kSrcSeq49Stride = 212;
+static const int kSrcAnim49Stride = 100;
+
+static const char* SrcStr49(const char* base, int index)
 {
-	r5::v8::mstudioseqdesc_t* seqdesc = reinterpret_cast<r5::v8::mstudioseqdesc_t*>(g_model.pData);
+	if (!base || index <= 0)
+		return "";
+	return base + index;
+}
+
+void ConvertAnims_49(const studiohdr_t* oldHeader)
+{
+	const int nseq = (oldHeader && oldHeader->numlocalseq > 0) ? oldHeader->numlocalseq : 0;
+	const char* srcBase = reinterpret_cast<const char*>(oldHeader);
+	const int outCount = nseq > 0 ? nseq : 1;
 
 	g_model.hdrV54()->localseqindex = g_model.pData - g_model.pBase;
-	g_model.hdrV54()->numlocalseq = 1;
+	g_model.hdrV54()->numlocalseq = outCount;
 
-	seqdesc->baseptr = 0;
-	AddToStringTable((char*)seqdesc, &seqdesc->szlabelindex, "ref");
-	AddToStringTable((char*)seqdesc, &seqdesc->szactivitynameindex, "");
+	r5::v8::mstudioseqdesc_t* seqs = reinterpret_cast<r5::v8::mstudioseqdesc_t*>(g_model.pData);
+	g_model.pData += sizeof(r5::v8::mstudioseqdesc_t) * outCount;
 
-	seqdesc->activity = -1;
+	const int numBones = g_model.hdrV54()->numbones > 0 ? g_model.hdrV54()->numbones : 1;
 
-	seqdesc->bbmin = g_model.hdrV54()->mins;
-	seqdesc->bbmax = g_model.hdrV54()->maxs;
-	seqdesc->groupsize[0] = 1;
-	seqdesc->groupsize[1] = 1;
-	seqdesc->paramindex[0] = -1;
-	seqdesc->paramindex[1] = -1;
-	seqdesc->fadeintime = 0.2;
-	seqdesc->fadeouttime = 0.2;
-
-	// needs to be adjusted if adding more than one anim
-	seqdesc->eventindex = sizeof(*seqdesc);
-	seqdesc->autolayerindex = sizeof(*seqdesc);
-	seqdesc->weightlistindex = sizeof(*seqdesc);
-
-	g_model.pData += sizeof(r5::v8::mstudioseqdesc_t);
-
-	// weightlist
-	for (int i = 0; i < g_model.hdrV54()->numbones; ++i)
+	for (int i = 0; i < outCount; ++i)
 	{
-		*reinterpret_cast<float*>(g_model.pData) = 1.0f;
-		g_model.pData += sizeof(int);
+		r5::v8::mstudioseqdesc_t* seqdesc = &seqs[i];
+		memset(seqdesc, 0, sizeof(*seqdesc));
+		seqdesc->baseptr = 0;
+		seqdesc->activity = -1;
+		seqdesc->paramindex[0] = -1;
+		seqdesc->paramindex[1] = -1;
+		seqdesc->fadeintime = 0.2f;
+		seqdesc->fadeouttime = 0.2f;
+		seqdesc->groupsize[0] = 1;
+		seqdesc->groupsize[1] = 1;
+		seqdesc->bbmin = g_model.hdrV54()->mins;
+		seqdesc->bbmax = g_model.hdrV54()->maxs;
+
+		const char* srcSeq = nullptr;
+		int nanims = 1;
+		const short* blends = nullptr;
+		if (nseq > 0)
+		{
+			srcSeq = srcBase + oldHeader->localseqindex + (i * kSrcSeq49Stride);
+			const int label = *reinterpret_cast<const int*>(srcSeq + 4);
+			const int actName = *reinterpret_cast<const int*>(srcSeq + 8);
+			seqdesc->flags = *reinterpret_cast<const int*>(srcSeq + 12);
+			seqdesc->activity = *reinterpret_cast<const int*>(srcSeq + 16);
+			seqdesc->actweight = *reinterpret_cast<const int*>(srcSeq + 20);
+			memcpy(&seqdesc->bbmin, srcSeq + 32, sizeof(Vector));
+			memcpy(&seqdesc->bbmax, srcSeq + 44, sizeof(Vector));
+
+			const int numblends = *reinterpret_cast<const int*>(srcSeq + 56);
+			const int animindexindex = *reinterpret_cast<const int*>(srcSeq + 60);
+			int gs0 = *reinterpret_cast<const int*>(srcSeq + 68);
+			int gs1 = *reinterpret_cast<const int*>(srcSeq + 72);
+			if (gs0 <= 0) gs0 = 1;
+			if (gs1 <= 0) gs1 = 1;
+			nanims = gs0 * gs1;
+			if (numblends > 0 && numblends != nanims)
+			{
+				gs0 = numblends;
+				gs1 = 1;
+				nanims = numblends;
+			}
+			if (nanims > 256)
+				nanims = 256;
+			seqdesc->groupsize[0] = gs0;
+			seqdesc->groupsize[1] = gs1;
+			seqdesc->paramindex[0] = *reinterpret_cast<const int*>(srcSeq + 76);
+			seqdesc->paramindex[1] = *reinterpret_cast<const int*>(srcSeq + 80);
+			seqdesc->paramstart[0] = *reinterpret_cast<const float*>(srcSeq + 84);
+			seqdesc->paramstart[1] = *reinterpret_cast<const float*>(srcSeq + 88);
+			seqdesc->paramend[0] = *reinterpret_cast<const float*>(srcSeq + 92);
+			seqdesc->paramend[1] = *reinterpret_cast<const float*>(srcSeq + 96);
+			seqdesc->paramparent = *reinterpret_cast<const int*>(srcSeq + 100);
+			seqdesc->fadeintime = *reinterpret_cast<const float*>(srcSeq + 104);
+			seqdesc->fadeouttime = *reinterpret_cast<const float*>(srcSeq + 108);
+
+			const char* labelStr = SrcStr49(srcSeq, label);
+			if (!labelStr[0])
+				labelStr = "ref";
+			AddToStringTable((char*)seqdesc, &seqdesc->szlabelindex, labelStr);
+			AddToStringTable((char*)seqdesc, &seqdesc->szactivitynameindex, SrcStr49(srcSeq, actName));
+			if (animindexindex > 0)
+				blends = reinterpret_cast<const short*>(srcSeq + animindexindex);
+		}
+		else
+		{
+			AddToStringTable((char*)seqdesc, &seqdesc->szlabelindex, "ref");
+			AddToStringTable((char*)seqdesc, &seqdesc->szactivitynameindex, "");
+		}
+
+		seqdesc->weightlistindex = static_cast<int>(g_model.pData - (char*)seqdesc);
+		for (int b = 0; b < numBones; ++b)
+		{
+			*reinterpret_cast<float*>(g_model.pData) = 1.0f;
+			g_model.pData += sizeof(float);
+		}
+
+		seqdesc->eventindex = seqdesc->weightlistindex;
+		seqdesc->autolayerindex = seqdesc->weightlistindex;
+
+		seqdesc->animindexindex = static_cast<int>(g_model.pData - (char*)seqdesc);
+		int* blendOff = reinterpret_cast<int*>(g_model.pData);
+		g_model.pData += sizeof(int) * nanims;
+
+		for (int a = 0; a < nanims; ++a)
+		{
+			ALIGN4(g_model.pData);
+			blendOff[a] = static_cast<int>(g_model.pData - (char*)seqdesc);
+			r5::v8::mstudioanimdesc_t* animdesc = reinterpret_cast<r5::v8::mstudioanimdesc_t*>(g_model.pData);
+			memset(animdesc, 0, sizeof(*animdesc));
+			animdesc->fps = 30.0f;
+			animdesc->numframes = 1;
+			// Left at 0 on purpose. See the comment above this function.
+			animdesc->animindex = 0;
+
+			const char* animName = "@ref";
+			if (blends && oldHeader->numlocalanim > 0)
+			{
+				int idx = blends[a];
+				if (idx < 0 || idx >= oldHeader->numlocalanim)
+					idx = 0;
+				const char* srcAnim = srcBase + oldHeader->localanimindex + (idx * kSrcAnim49Stride);
+				const int nameIdx = *reinterpret_cast<const int*>(srcAnim + 4);
+				animdesc->fps = *reinterpret_cast<const float*>(srcAnim + 8);
+				if (!(animdesc->fps > 0.0f))
+					animdesc->fps = 30.0f;
+				animdesc->flags = *reinterpret_cast<const int*>(srcAnim + 12);
+				animdesc->numframes = *reinterpret_cast<const int*>(srcAnim + 16);
+				if (animdesc->numframes < 1)
+					animdesc->numframes = 1;
+				const char* n = SrcStr49(srcAnim, nameIdx);
+				if (n[0])
+					animName = n;
+			}
+			else if (nseq == 0)
+			{
+				animdesc->flags = STUDIO_ALLZEROS;
+			}
+
+			AddToStringTable((char*)animdesc, &animdesc->sznameindex, animName);
+			g_model.pData += sizeof(r5::v8::mstudioanimdesc_t);
+		}
+		ALIGN4(g_model.pData);
 	}
 
-	seqdesc->animindexindex = g_model.pData - (char*)seqdesc;
-
-	// blend
-	*reinterpret_cast<int*>(g_model.pData) = seqdesc->animindexindex + sizeof(int);
-	g_model.pData += sizeof(int);
-
-	// add animdesc
-	r5::v8::mstudioanimdesc_t* animdesc = reinterpret_cast<r5::v8::mstudioanimdesc_t*>(g_model.pData);
-
-	AddToStringTable((char*)animdesc, &animdesc->sznameindex, "@ref");
-	animdesc->fps = 30;
-	animdesc->flags = STUDIO_ALLZEROS; // no way!!!
-
-	g_model.pData += sizeof(r5::v8::mstudioanimdesc_t);
-	ALIGN4(g_model.pData);
-
+	printf("ConvertAnims_49: wrote %d sequence(s) from %d source sequence(s); animindex left 0 (Source mstudio_rle_anim_t is not R5 RLE)\n",
+		outCount, nseq);
 }
 
 #define FILEBUFSIZE (32 * 1024 * 1024)
@@ -673,7 +780,7 @@ void ConvertMDL49To54(char* pMDL, const std::string& pathIn, const std::string& 
 
 	ALIGN4(g_model.pData);
 
-	ConvertAnims_49();
+	ConvertAnims_49(oldHeader);
 
 	// convert bodyparts, models, and meshes
 	input.seek(oldHeader->bodypartindex, rseekdir::beg);
