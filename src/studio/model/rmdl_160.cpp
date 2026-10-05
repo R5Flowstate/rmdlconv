@@ -998,6 +998,11 @@ static int VoteLeafSurfaceId(const uint16_t zUpInfo, const uint8_t surfTypeID[2]
 template <typename VisitFn>
 static void EnumerateBvhLeaves(const BvhPartCtx& part, const int leafDataDwords, const VisitFn& visit)
 {
+	// Null when this part has no BVH node (leaf root serialized as an empty
+	// node array). Do not read node 0; that is the dedicated page fault.
+	if (!part.nodeBase)
+		return;
+
 	std::set<int> visited;
 
 	std::vector<int> stack;
@@ -2829,6 +2834,21 @@ static void ConvertCollisionData_V160(const r5::v160::studiohdr_t* const oldStud
 		else
 			leafSizeBytes = pOldCollHeaders[0].bvhNodeIndex - h.bvhLeafIndex;
 		p.leafDataDwords = static_cast<int>(leafSizeBytes / 4);
+
+		// Nodes of the last part end at the BVH blob, not at EOF. A leaf-only
+		// tree stores bvhNodeIndex == blob size (0 node bytes). Null nodeBase
+		// so the surface walk does not read past the allocation.
+		__int64 nodeBytes;
+		if (i != headerCount - 1)
+			nodeBytes = static_cast<__int64>(pOldCollHeaders[i + 1].bvhNodeIndex) - static_cast<__int64>(h.bvhNodeIndex);
+		else
+		{
+			const size_t collisionOffset = static_cast<size_t>(pOldBVHData - reinterpret_cast<const char*>(oldStudioHdr));
+			const size_t blobEnd = V160BvhBlobEnd(oldStudioHdr, collisionOffset, fileSize);
+			nodeBytes = static_cast<__int64>(blobEnd - collisionOffset) - static_cast<__int64>(h.bvhNodeIndex);
+		}
+		if (nodeBytes < 64)
+			p.nodeBase = nullptr;
 	}
 
 	const CollSurfPropPlan_t surfPlan = PlanCollisionSurfacePropRemap(

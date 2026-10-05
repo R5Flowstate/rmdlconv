@@ -687,6 +687,22 @@ namespace bvh4
 
         if (m_buildNodes.empty()) return;
 
+        // A mesh that fits in one leaf (Portal 2 glass covers: 2 triangles,
+        // maxTrianglesPerLeaf 4) has that leaf as the root. The loop below
+        // skips leaves, so the blob is written with bvhNodeIndex at the blob
+        // end and zero node bytes. Dedicated -v17 then reads node 0 off the
+        // end of the file. Wrap the leaf in one internal node; traversal
+        // always enters at node 0.
+        if (m_buildNodes.back().isLeaf)
+        {
+            const uint32_t leafIdx = static_cast<uint32_t>(m_buildNodes.size() - 1);
+            uint32_t childIndices[4] = { leafIdx, 0, 0, 0 };
+            uint8_t childTypes[4] = { 1, 0, 0, 0 };
+            AABB childBounds[4];
+            childBounds[0] = m_buildNodes[leafIdx].bounds;
+            CreateInternalNode(childIndices, childTypes, 1, childBounds);
+        }
+
         // Process nodes breadth-first
         std::vector<uint32_t> nodeQueue;
         std::vector<uint32_t> nodeMapping(m_buildNodes.size(), UINT32_MAX);
