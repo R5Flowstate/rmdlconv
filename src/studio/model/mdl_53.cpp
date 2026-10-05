@@ -42,8 +42,12 @@ void ConvertStudioHdr(r5::v8::studiohdr_t* out, r2::studiohdr_t* hdr)
 	out->mins = hdr->hull_min;
 	out->maxs = hdr->hull_max;
 
-	out->view_bbmin = hdr->view_bbmin;
-	out->view_bbmax = hdr->view_bbmax;
+	// A zero clipping box means "use the hull"; Apex culls by the clipping box as stored,
+	// so a zero box culls the model as a point.
+	const bool noViewBox = hdr->view_bbmin.x == 0.f && hdr->view_bbmin.y == 0.f && hdr->view_bbmin.z == 0.f
+		&& hdr->view_bbmax.x == 0.f && hdr->view_bbmax.y == 0.f && hdr->view_bbmax.z == 0.f;
+	out->view_bbmin = noViewBox ? hdr->hull_min : hdr->view_bbmin;
+	out->view_bbmax = noViewBox ? hdr->hull_max : hdr->view_bbmax;
 
 	// these will probably have to be modified at some point
 	out->flags = hdr->flags;
