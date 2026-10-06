@@ -726,6 +726,22 @@ void ConvertMDL49To54(char* pMDL, const std::string& pathIn, const std::string& 
 	}
 	//-| end vvd reading
 
+	// Optional per-vertex colour sidecar (VVC, VVD vertex order); its presence gives the
+	// VG a COLOR0 stream with the authored values.
+	std::unique_ptr<char[]> vvcBuf;
+	{
+		std::string vvcPath = ChangeExtension(pathIn, "vvc");
+		if (FILE_EXISTS(vvcPath))
+		{
+			size_t vvcSize = GetFileSize(vvcPath);
+			vvcBuf = std::unique_ptr<char[]>(new char[vvcSize]);
+			std::ifstream vvcIn(vvcPath, std::ios::in | std::ios::binary);
+			vvcIn.read(vvcBuf.get(), vvcSize);
+			vvcIn.close();
+			printf("  vertex colours from %s\n", vvcPath.c_str());
+		}
+	}
+
 	std::string rmdlPath = ChangeExtension(pathOut, "rmdl");
 	std::ofstream out(rmdlPath, std::ios::out | std::ios::binary);
 
@@ -1073,7 +1089,9 @@ void ConvertMDL49To54(char* pMDL, const std::string& pathIn, const std::string& 
 	out.write(g_model.pBase, pHdr->length);
 
 	// now that rmdl is fully converted, convert vtx/vvd/vvc to VG
-	CreateVGFile(ChangeExtension(pathOut, "vg"), pHdr, vtxBuf.get(), vvdBuf.get(), nullptr, nullptr);
+	if (vvcBuf)
+		pHdr->flags |= STUDIOHDR_FLAGS_USES_VERTEX_COLOR;
+	CreateVGFile(ChangeExtension(pathOut, "vg"), pHdr, vtxBuf.get(), vvdBuf.get(), vvcBuf.get(), nullptr);
 
 	// now delete rmdl buffer so we can write the rig
 	FreeModelBuf(g_model.pBase);
