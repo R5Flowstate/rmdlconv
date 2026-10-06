@@ -4,6 +4,7 @@
 
 #include "phy_apex.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -263,6 +264,45 @@ namespace collision
                 pos = end;
             }
         }
+
+        // Apex copies a break "model" value verbatim as the gib's model name and only loads
+        // names ending in .rmdl, so Valve's bare "dir\name" form becomes "mdl/dir/name.rmdl".
+        void CanonicalizeBreakModels(std::string& kv)
+        {
+            static const std::string kKey = "\"model\"";
+            size_t pos = 0;
+            while ((pos = kv.find("break", pos)) != std::string::npos)
+            {
+                const size_t open = kv.find('{', pos);
+                const size_t close = open == std::string::npos ? open : kv.find('}', open);
+                if (close == std::string::npos) break;
+                const size_t key = kv.find(kKey, open);
+                if (key == std::string::npos || key > close) { pos = close; continue; }
+                const size_t vs = kv.find('"', key + kKey.size());
+                const size_t ve = vs == std::string::npos ? vs : kv.find('"', vs + 1);
+                if (ve == std::string::npos || ve > close) { pos = close; continue; }
+
+                std::string name = kv.substr(vs + 1, ve - vs - 1);
+                std::replace(name.begin(), name.end(), '\\', '/');
+                std::transform(name.begin(), name.end(), name.begin(),
+                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                auto endsWith = [&](const char* s) {
+                    const size_t n = std::strlen(s);
+                    return name.size() >= n && name.compare(name.size() - n, n, s) == 0;
+                };
+                if (name.rfind("models/", 0) == 0) name.erase(0, 7);
+                if (endsWith(".mdl")) name.erase(name.size() - 4);
+                if (!endsWith(".rmdl"))
+                {
+                    if (name.rfind("mdl/", 0) != 0) name.insert(0, "mdl/");
+                    name += ".rmdl";
+                }
+                printf("  break model -> %s\n", name.c_str());
+                kv.replace(vs + 1, ve - vs - 1, name);
+                pos = kv.find('}', vs + 1 + name.size());
+                if (pos == std::string::npos) break;
+            }
+        }
     }
 
     ApexPhy BuildApexPhyFromValve(const void* phyData, size_t phySize)
@@ -350,6 +390,7 @@ namespace collision
 
         if (p < end)
             out.keyValues.assign(reinterpret_cast<const char*>(p), end - p);
+        CanonicalizeBreakModels(out.keyValues);
         ReadSolidKeyValues(out.keyValues, out.solids);
         out.valid = true;
         return out;
