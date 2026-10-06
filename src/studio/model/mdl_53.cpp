@@ -656,7 +656,7 @@ void ConvertMDL53To54(char* pMDL, const std::string& pathIn, const std::string& 
 		if (apexPhy.valid)
 			apexPhyBytes = collision::WriteApexPhy(apexPhy);
 		else
-			printf("  WARNING: phy kept as Valve/IVP (%s)\n", apexPhy.error.c_str());
+			throw std::runtime_error("phy not convertible to Apex geoms: " + apexPhy.error);
 	}
 
 	std::unique_ptr<char[]> vvcBuf;

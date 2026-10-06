@@ -98,30 +98,66 @@ namespace collision
             std::map<int, std::vector<int>> groups;
             for (size_t i = 0; i < tris.size(); i++) groups[find(static_cast<int>(i))].push_back(static_cast<int>(i));
 
-            struct Side { std::vector<int> v; V3 n; double d; };
-            std::vector<Side> sides;
+            // A merged group must be planar; a curved run joined edge by edge is not, so it falls
+            // back to one side per triangle.
+            std::vector<std::vector<int>> faces;
             for (const auto& [root, members] : groups)
             {
                 V3 n{ 0, 0, 0 };
-                std::vector<int> vs;
-                for (int m : members)
-                {
-                    n = add(n, mul(tris[m].n, tris[m].area));
-                    for (int k : tris[m].v) vs.push_back(k);
-                }
+                for (int m : members) n = add(n, mul(tris[m].n, tris[m].area));
                 n = norm(n);
-                std::sort(vs.begin(), vs.end());
-                vs.erase(std::unique(vs.begin(), vs.end()), vs.end());
+                double lo = 1e30, hi = -1e30;
+                for (int m : members)
+                    for (int k : tris[m].v) { const double d = dot(n, P[k]); lo = std::min(lo, d); hi = std::max(hi, d); }
+                if (members.size() == 1 || hi - lo < kCoplanarDist)
+                    faces.push_back(members);
+                else
+                    for (int m : members) faces.push_back({ m });
+            }
 
+            // Each side's loop is its boundary: the triangle edges not shared inside the face, walked
+            // head to tail. Neighbouring loops then share exactly the same edges.
+            struct Side { std::vector<int> v; V3 n; double d; };
+            std::vector<Side> sides;
+            for (const auto& members : faces)
+            {
+                std::map<std::pair<int, int>, int> directed;
+                for (int m : members)
+                    for (int k = 0; k < 3; k++) directed[{ tris[m].v[k], tris[m].v[(k + 1) % 3] }]++;
+                std::map<int, int> next;
+                for (const auto& [e, c] : directed)
+                {
+                    if (directed.count({ e.second, e.first }))
+                        continue;
+                    if (next.count(e.first)) { err = "side boundary branches"; return false; }
+                    next[e.first] = e.second;
+                }
+                if (next.empty()) { err = "side has no boundary"; return false; }
+                std::vector<int> vs;
+                int at = next.begin()->first;
+                do
+                {
+                    vs.push_back(at);
+                    auto it = next.find(at);
+                    if (it == next.end() || vs.size() > next.size()) { err = "side boundary is not one loop"; return false; }
+                    at = it->second;
+                } while (at != vs.front());
+                if (vs.size() != next.size()) { err = "side boundary is not one loop"; return false; }
+
+                V3 n{ 0, 0, 0 };
+                for (int m : members) n = add(n, mul(tris[m].n, tris[m].area));
+                n = norm(n);
+
+                // Start at the smallest angle about the centre, measured from the lowest-index vertex.
+                std::vector<int> byIndex = vs;
+                std::sort(byIndex.begin(), byIndex.end());
                 V3 ctr{ 0, 0, 0 };
-                for (int k : vs) ctr = add(ctr, P[k]);
+                for (int k : byIndex) ctr = add(ctr, P[k]);
                 ctr = mul(ctr, 1.0 / vs.size());
-                const V3 u = norm(sub(P[vs[0]], ctr));
+                const V3 u = norm(sub(P[byIndex[0]], ctr));
                 const V3 w = cross(n, u);
-                std::sort(vs.begin(), vs.end(), [&](int a, int b) {
-                    const V3 da = sub(P[a], ctr), db = sub(P[b], ctr);
-                    return std::atan2(dot(da, w), dot(da, u)) < std::atan2(dot(db, w), dot(db, u));
-                });
+                auto angle = [&](int k) { const V3 dk = sub(P[k], ctr); return std::atan2(dot(dk, w), dot(dk, u)); };
+                std::rotate(vs.begin(), std::min_element(vs.begin(), vs.end(), [&](int a, int b) { return angle(a) < angle(b); }), vs.end());
                 if (vs.size() > 32)
                 {
                     err = "side has more than 32 vertices";
@@ -130,6 +166,19 @@ namespace collision
                 double d = -1e30;
                 for (int k : vs) d = std::max(d, dot(n, P[k]));
                 sides.push_back({ vs, n, d });
+            }
+
+            // Vertices inside a merged face are not hull corners.
+            {
+                std::vector<int> keep(P.size(), -1);
+                for (const auto& s : sides)
+                    for (int k : s.v) keep[k] = 0;
+                std::vector<V3> Q;
+                for (size_t k = 0; k < P.size(); k++)
+                    if (keep[k] == 0) { keep[k] = static_cast<int>(Q.size()); Q.push_back(P[k]); }
+                for (auto& s : sides)
+                    for (int& k : s.v) k = keep[k];
+                P.swap(Q);
             }
 
             // Edges in first-seen order while walking the sides; side A walks v0->v1.
