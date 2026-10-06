@@ -122,12 +122,22 @@ static uint64_t RTech_StringToGuid(const char* const pString)
 // Set while converting a Titanfall 2 model: its texture names are bare material
 // paths, and Apex material assets carry the shader-type suffix.
 static const char* s_materialSuffix = nullptr;
+// Set while converting a v49 model whose names carry the suffix themselves.
+static bool s_largeModelVariant = false;
 
 static uint64_t MaterialPathToGuid(const char* const pSrcPath)
 {
 	std::string path(pSrcPath ? pSrcPath : "");
 	for (char& c : path)
 		if (c == '\\') c = '/';
+
+	// A model too large for packed positions draws with the full-float variant.
+	if (s_largeModelVariant && path.size() > 5)
+	{
+		std::string tail = path.substr(path.size() - 5);
+		if (tail == "_rgdp") path.replace(path.size() - 5, 5, "_rgdc");
+		else if (tail == "_sknp") path.replace(path.size() - 5, 5, "_sknc");
+	}
 
 	std::string full = "material/" + path + (s_materialSuffix ? s_materialSuffix : "") + ".rpak";
 	full.append(8, '\0');
@@ -1670,7 +1680,11 @@ void ConvertClientModel_49To17(const std::string& inputFile, const std::string& 
 		Error("[v17/49] intermediate v8 model not produced: %s\n", tempRmdl.c_str());
 
 	// Sibling .vg from CreateVGFile is next to intermediate.
+	s_largeModelVariant = g_vgLargeModel;
+	if (g_vgLargeModel)
+		printf("[v17/49]   full-float positions: _rgdp/_sknp materials bind their _rgdc/_sknc variant\n");
 	ConvertClientModel_8To17(mid, outputFile);
+	s_largeModelVariant = false;
 
 	// Cleanup temp tree (best-effort).
 	std::error_code ec;

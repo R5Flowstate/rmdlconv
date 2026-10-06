@@ -256,16 +256,25 @@ void CVertexHardwareDataFile_V1::FillFromDiskFiles(r5::v8::studiohdr_t* pHdr, Op
 		pHdr->hull_min.x, pHdr->hull_min.y, pHdr->hull_min.z,
 		pHdr->hull_max.x, pHdr->hull_max.y, pHdr->hull_max.z);
 
-	// Check if model exceeds Vector64 encoding limits
-	// Vector64 can encode: X/Y in [-1024, 1024], Z in [-2048, 2048]
-	if (!isLargeModel && (pHdr->hull_min.x < -1023.f || pHdr->hull_max.x > 1023.f))
-		isLargeModel = true;
-
-	if (!isLargeModel && (pHdr->hull_min.y < -1023.f || pHdr->hull_max.y > 1023.f))
-		isLargeModel = true;
-
-	if (!isLargeModel && (pHdr->hull_min.z < -2047.f || pHdr->hull_max.z > 2047.f))
-		isLargeModel = true;
+	// Vector64 encodes X/Y in [-1024, 1024] and Z in [-2048, 2048]. The decision is
+	// made on the vertices themselves: studiomdl can write a hull far past them.
+	Vector lo(FLT_MAX, FLT_MAX, FLT_MAX), hi(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+	for (int i = 0; i < pVVD->numLODVertexes[0]; i++)
+	{
+		const Vector& p = pVVD->GetVertexData(i)->m_vecPosition;
+		lo.x = fminf(lo.x, p.x); lo.y = fminf(lo.y, p.y); lo.z = fminf(lo.z, p.z);
+		hi.x = fmaxf(hi.x, p.x); hi.y = fmaxf(hi.y, p.y); hi.z = fmaxf(hi.z, p.z);
+	}
+	if (pVVD->numLODVertexes[0] == 0)
+	{
+		lo = pHdr->hull_min;
+		hi = pHdr->hull_max;
+	}
+	isLargeModel = lo.x < -1023.f || hi.x > 1023.f || lo.y < -1023.f || hi.y > 1023.f || lo.z < -2047.f || hi.z > 2047.f;
+	if (isLargeModel != (pHdr->hull_min.x < -1023.f || pHdr->hull_max.x > 1023.f || pHdr->hull_min.y < -1023.f ||
+		pHdr->hull_max.y > 1023.f || pHdr->hull_min.z < -2047.f || pHdr->hull_max.z > 2047.f))
+		printf("  [VG] hull and vertices disagree; vertices span min(%.1f, %.1f, %.1f) max(%.1f, %.1f, %.1f)\n",
+			lo.x, lo.y, lo.z, hi.x, hi.y, hi.z);
 
 	g_vgLargeModel = isLargeModel;
 
