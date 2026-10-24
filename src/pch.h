@@ -9,6 +9,7 @@
 #include <map>
 #include <set>
 #include <vector>
+#include <list>
 #include <cstdarg>
 #include <cassert>
 #include <cstdlib>

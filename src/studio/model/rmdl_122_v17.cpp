@@ -199,6 +199,25 @@ void ConvertRMDL122To17(char* pMDL, const size_t fileSize, const std::string& pa
 		numbones, numbodyparts, numtextures, numhitboxsets, numlocalseq,
 		numskinref, numskinfamilies, oldHdr->numlocalattachments);
 
+	// The v17 VG LOD header stores its mesh count in a byte: past 255 the client reads mesh data off the end of
+	// the table (garbage draw counts, stack overflow in the model renderer).
+	{
+		const mstudiobodyparts_t* const bodyParts = reinterpret_cast<const mstudiobodyparts_t*>(pMDL + oldHdr->bodypartindex);
+		int lodMeshes = 0;
+		for (int i = 0; i < numbodyparts; i++)
+		{
+			const r5::v121::mstudiomodel_t* const models =
+				reinterpret_cast<const r5::v121::mstudiomodel_t*>((const char*)&bodyParts[i] + bodyParts[i].modelindex);
+			for (int j = 0; j < bodyParts[i].nummodels; j++)
+				lodMeshes += models[j].nummeshes;
+		}
+		if (lodMeshes > 255)
+		{
+			printf("[v17/122]   ERROR: %d meshes per LOD; the v17 vertex group allows 255. Merge body groups or drop empty meshes.\n", lodMeshes);
+			exit(1);
+		}
+	}
+
 	// ---- LOUD GUARDS for features we cannot faithfully relocate.
 	if (oldHdr->procBoneCount > 0)
 		printf("[v17/122]   WARNING: '%s' has %d procedural (jiggle) bones -- proc-rule relocation NOT implemented; "

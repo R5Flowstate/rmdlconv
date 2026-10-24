@@ -2774,6 +2774,43 @@ static size_t V160BvhBlobEnd(const r5::v160::studiohdr_t* const hdr, const size_
 }
 
 //
+// BvhNodeArrayBytes
+// Size of a part's node array from the tree itself: highest node reachable from node 0,
+// plus one, times 64. Header offsets cannot bound it when the blob is not the last
+// region (models converted from v19 S30 place it before other data).
+//
+static size_t BvhNodeArrayBytes(const char* const nodeBase, const size_t availBytes)
+{
+	const size_t availNodes = availBytes / 64;
+	if (!availNodes)
+		return 0;
+
+	std::vector<uint32_t> stack{ 0 };
+	std::vector<bool> seen(availNodes, false);
+	uint32_t maxNode = 0;
+	while (!stack.empty())
+	{
+		const uint32_t n = stack.back();
+		stack.pop_back();
+		if (n >= availNodes || seen[n])
+			continue;
+		seen[n] = true;
+		if (n > maxNode)
+			maxNode = n;
+
+		uint32_t w[4];
+		memcpy(w, nodeBase + static_cast<size_t>(n) * 64 + 48, sizeof(w));
+		const uint32_t types[4] = { w[2] & 0xF, (w[2] >> 4) & 0xF, w[3] & 0xF, (w[3] >> 4) & 0xF };
+		for (int c = 0; c < 4; ++c)
+		{
+			if (types[c] == 0)
+				stack.push_back(w[c] >> 8);
+		}
+	}
+	return (static_cast<size_t>(maxNode) + 1) * 64;
+}
+
+//
 // ConvertCollisionData_V160
 // Purpose: converts v16 collision data (40-byte headers) to v10 format (32-byte headers)
 // Note: v16 collision header structure is binary compatible with v120
@@ -2846,6 +2883,9 @@ static void ConvertCollisionData_V160(const r5::v160::studiohdr_t* const oldStud
 			const size_t collisionOffset = static_cast<size_t>(pOldBVHData - reinterpret_cast<const char*>(oldStudioHdr));
 			const size_t blobEnd = V160BvhBlobEnd(oldStudioHdr, collisionOffset, fileSize);
 			nodeBytes = static_cast<__int64>(blobEnd - collisionOffset) - static_cast<__int64>(h.bvhNodeIndex);
+			const size_t nodeAbs = collisionOffset + static_cast<size_t>(h.bvhNodeIndex);
+			if (nodeBytes < 64 && nodeAbs + 64 <= fileSize)
+				nodeBytes = static_cast<__int64>(BvhNodeArrayBytes(pOldBVHData + h.bvhNodeIndex, fileSize - nodeAbs));
 		}
 		if (nodeBytes < 64)
 			p.nodeBase = nullptr;
@@ -3022,6 +3062,12 @@ static void ConvertCollisionData_V160(const r5::v160::studiohdr_t* const oldStud
 			const size_t blobEnd = V160BvhBlobEnd(oldStudioHdr, collisionOffset, fileSize);
 
 			nodeSize = static_cast<__int64>(blobEnd - collisionOffset) - oldHeader->bvhNodeIndex;
+			const size_t nodeAbs = collisionOffset + static_cast<size_t>(oldHeader->bvhNodeIndex);
+			if (nodeSize < 64 && nodeAbs + 64 <= fileSize)
+			{
+				nodeSize = static_cast<__int64>(BvhNodeArrayBytes(reinterpret_cast<const char*>(pOldCollModel) + oldHeader->bvhNodeIndex, fileSize - nodeAbs));
+				printf("  BVH not the last region: last part's node array sized from its tree (%lld bytes)\n", nodeSize);
+			}
 			if (nodeSize < 0)
 				nodeSize = 0;
 			if (nodeSize > 1024 * 1024)

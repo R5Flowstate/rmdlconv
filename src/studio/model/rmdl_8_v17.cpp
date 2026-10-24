@@ -7,6 +7,7 @@
 #include <studio/versions.h>
 #include <core/utils.h>
 #include <collision/phy_parser.h>
+#include <collision/phy_apex.h>
 
 /*
 	Type:    RMDL / MDL
@@ -324,6 +325,15 @@ void ConvertRMDL8To17(char* pMDL, const size_t fileSize, const std::string& path
 		numskinref, numskinfamilies, meshCount, oldHdr->numlocalattachments,
 		numbones > 0 ? "yes" : "no");
 
+	// The v17 VG LOD header stores its mesh count in a byte: past 255 the client reads mesh data off the end of
+	// the table (garbage draw counts, stack overflow in the model renderer).
+	if (meshCount > 255)
+	{
+		printf("[v17/8]   ERROR: '%s' has %d meshes per LOD; the v17 vertex group allows 255. Merge body groups or drop empty meshes.\n",
+			rawModelName.c_str(), meshCount);
+		exit(1);
+	}
+
 	if (oldHdr->numikchains > 0)
 		printf("[v17/8]   WARNING: '%s' has %d ikchains -- ikchain/link relocation NOT implemented.\n",
 			rawModelName.c_str(), oldHdr->numikchains);
@@ -394,7 +404,8 @@ void ConvertRMDL8To17(char* pMDL, const size_t fileSize, const std::string& path
 	nh->uiPanelCount = 0;
 	nh->numlocalposeparameters = 0; // set only when poseparam table is emitted
 	nh->numsrcbonetransform = 0; // set only when srcbonetransform table is emitted
-	nh->fadeDistance = oldHdr->defaultFadeDist;
+	// S21 uses -1 for "never fade"; a 0 from the source would fade at distance 0.
+	nh->fadeDistance = oldHdr->defaultFadeDist > 0.0f ? oldHdr->defaultFadeDist : -1.0f;
 	nh->gatherSize   = oldHdr->gatherSize;
 	nh->activitylistversion = static_cast<char>(oldHdr->activitylistversion);
 	nh->meshCount    = static_cast<uint16_t>(meshCount);
@@ -1372,19 +1383,25 @@ size_t ConvertVGData_Rev1To17(char* inputBuf, const size_t inputSize, const std:
 			nm->vertCount     = rec.src->vertCount;
 			nm->vertCacheSize = static_cast<uint16_t>(stride);
 
-			uint16_t maxBones = 1;
+			// vertBoneCount = distinct bone states the mesh's vertices reference (retail contract).
+			uint16_t usedBones = 1;
 			if ((rec.src->flags & VERTEX_HAS_WEIGHT_BONES) && rec.src->vertCount > 0)
 			{
+				bool used[256] = {};
 				const char* const vtx = vertBase + rec.src->vertOffset;
 				for (uint32_t v = 0; v < rec.src->vertCount; v++)
 				{
 					const vg::mstudiopackedbones_t* const pb =
 						reinterpret_cast<const vg::mstudiopackedbones_t*>(vtx + static_cast<size_t>(v) * stride + 12);
-					const uint16_t nb = static_cast<uint16_t>(pb->numbones + 1);
-					if (nb > maxBones) maxBones = nb;
+					const int slots = pb->numbones < 3 ? pb->numbones + 1 : 3;
+					for (int s = 0; s < slots; s++)
+						used[pb->bones[s]] = true;
 				}
+				usedBones = 0;
+				for (const bool b : used)
+					usedBones += b ? 1 : 0;
 			}
-			nm->vertBoneCount = maxBones;
+			nm->vertBoneCount = usedBones;
 			nm->indexCount = static_cast<uint32_t>(rec.src->indexCount) & 0x0FFFFFFFu;
 			// rev1 has no index type; its indices are 16-bit triangle lists (type 1). The
 			// engine derives the index element size from this field.
@@ -1422,7 +1439,8 @@ size_t ConvertVGData_Rev1To17(char* inputBuf, const size_t inputSize, const std:
 		}
 	}
 
-	const size_t outSize = cur;
+	// Retail rev4 VG blobs are always a multiple of 16 bytes.
+	const size_t outSize = Align16(cur);
 	std::ofstream ofs(pathOut, std::ios::out | std::ios::binary);
 	ofs.write(out, static_cast<std::streamsize>(outSize));
 	ofs.close();
@@ -1552,7 +1570,16 @@ void ConvertClientModel_8To17(const std::string& inputFile, const std::string& o
 				rawModelName.c_str());
 		}
 
-		if (vgDecompSize > 0)
+		// A permanent .vg_static is the static-prop vertex cache; skinned models only stream.
+		const r5::v8::studiohdr_t* const srcHdr = reinterpret_cast<const r5::v8::studiohdr_t*>(pMDL.get());
+		const bool isStaticProp = srcHdr->numbones <= 1 || (srcHdr->flags & STUDIOHDR_FLAGS_STATIC_PROP);
+		const std::string vgStaticOut = ChangeExtension(outputFile, "vg_static");
+		if (!isStaticProp)
+		{
+			std::error_code ec;
+			std::filesystem::remove(vgStaticOut, ec);
+		}
+		else if (vgDecompSize > 0)
 		{
 			std::error_code ec;
 			std::filesystem::copy_file(vgOut, ChangeExtension(outputFile, "vg_static"),
@@ -1678,6 +1705,25 @@ void ConvertClientModel_49To17(const std::string& inputFile, const std::string& 
 		mid = ChangeExtension(tempRmdl, "rmdl");
 	if (!FILE_EXISTS(mid))
 		Error("[v17/49] intermediate v8 model not produced: %s\n", tempRmdl.c_str());
+
+	// A Portal 2 model keeps its collision in a sibling Valve/IVP .phy. Rebuilt as Apex geoms next to the
+	// intermediate, the v8 -> v17 pass compacts it like any S10 .phy, so the model can be a physics prop.
+	const std::string p2Phy = ChangeExtension(inputFile, "phy");
+	if (FILE_EXISTS(p2Phy))
+	{
+		const uintmax_t phySize = GetFileSize(p2Phy);
+		std::unique_ptr<char[]> phyBuf = ReadWholeFile(p2Phy);
+		const collision::ApexPhy apexPhy = collision::BuildApexPhyFromValve(phyBuf.get(), static_cast<size_t>(phySize));
+		if (apexPhy.valid)
+		{
+			const std::vector<uint8_t> bytes = collision::WriteApexPhy(apexPhy);
+			std::ofstream ofs(ChangeExtension(mid, "phy"), std::ios::out | std::ios::binary);
+			ofs.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+			printf("[v17/49]   .phy: %zu solid(s) -> Apex geoms (%zu bytes)\n", apexPhy.solids.size(), bytes.size());
+		}
+		else
+			printf("[v17/49]   WARNING: .phy not convertible to Apex geoms (%s) -- model has no physics\n", apexPhy.error.c_str());
+	}
 
 	// Sibling .vg from CreateVGFile is next to intermediate.
 	s_largeModelVariant = g_vgLargeModel;

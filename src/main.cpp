@@ -777,6 +777,13 @@ bool g_enableAutoGenBVH = false;
 // Opt-in -phy_ivp: re-encode id=1 geoms as Valve/IVP (id=0). Default is id=1 verbatim.
 bool g_enablePhyIvp = false;
 
+// -materialprefix <p>: prepend <p> to every material a v53 model references, so a port
+// keeps its own materials under its own guids; -materialprefixskip <a,b,..> exempts paths.
+std::string g_materialPrefix;
+std::vector<std::string> g_materialPrefixSkip;
+// -modelprefix <p>: the v53 model's own name becomes mdl/<p><name>, matching its pak path.
+std::string g_modelPrefix;
+
 int main(int argc, char** argv)
 {
 
@@ -792,6 +799,33 @@ int main(int argc, char** argv)
 	fflush(stdout);
 
 	CommandLine cmdline(argc, argv);
+
+	if (cmdline.HasParam("-materialprefix"))
+	{
+		g_materialPrefix = cmdline.GetParamValue("-materialprefix", "");
+		if (cmdline.HasParam("-materialprefixskip"))
+		{
+			std::string list = cmdline.GetParamValue("-materialprefixskip", "");
+			size_t start = 0;
+			while (start <= list.size())
+			{
+				size_t end = list.find(',', start);
+				if (end == std::string::npos)
+					end = list.size();
+				if (end > start)
+					g_materialPrefixSkip.push_back(list.substr(start, end - start));
+				start = end + 1;
+			}
+		}
+		printf("[INFO] -materialprefix '%s' (%zu skipped prefixes)\n", g_materialPrefix.c_str(), g_materialPrefixSkip.size());
+		fflush(stdout);
+	}
+	if (cmdline.HasParam("-modelprefix"))
+	{
+		g_modelPrefix = cmdline.GetParamValue("-modelprefix", "");
+		printf("[INFO] -modelprefix '%s'\n", g_modelPrefix.c_str());
+		fflush(stdout);
+	}
 
 	// Opt-in to auto-generated BVH4 for v160 -> v8 conversions whose source
 	// lacks inline BVH. See g_enableAutoGenBVH declaration above for rationale.

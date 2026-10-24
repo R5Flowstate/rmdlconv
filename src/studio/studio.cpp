@@ -428,83 +428,64 @@ void CVertexHardwareDataFile_V1::FillFromDiskFiles(r5::v8::studiohdr_t* pHdr, Op
 
 							// add bone state func here if needed
 
-							// set the actual weights
-							// redo at somepoint but for now I cba to do it
-							if ((pHdr->flags & STUDIOHDR_FLAGS_USES_EXTRA_BONE_WEIGHTS) && pHdr->version == MdlVersion::APEXLEGENDS) // add version check just in case as we are reading off a header flag
+							// Apex VG reads bones[0]/weight[0] inline, bones[1] as the LAST influence (implicit weight), and
+							// weight[1] as the index of the middle influences in the extra-weight buffer, for every source.
+							const bool apexWeights = (pHdr->flags & STUDIOHDR_FLAGS_USES_EXTRA_BONE_WEIGHTS) && pHdr->version == MdlVersion::APEXLEGENDS;
+							auto packedWeight = [&](int n) -> short
 							{
-								// "complex" weights
-								newHwVert.m_WeightsPacked.weight[1] = newHwMesh.extraBoneWeightSize; // set this before so we can add for the next one
+								return apexWeights ? pVvdVert->m_BoneWeights.weightextra.weight[n]
+									: static_cast<short>(pVvdVert->m_BoneWeights.weight[n] * 32767.0f + 0.5f);
+							};
 
-								for (int n = 0; n < pVvdVert->m_BoneWeights.numbones; n++)
+							newHwVert.m_WeightsPacked.weight[1] = newHwMesh.extraBoneWeightSize;
+
+							for (int n = 0; n < pVvdVert->m_BoneWeights.numbones; n++)
+							{
+								if (n == (pVvdVert->m_BoneWeights.numbones - 1))
 								{
-									// this causes the weird conversion artifact that normal vg has where verts with one weight have the same bone in two slots
-									// so obviously respawn is doing something similar
-									if (n == (pVvdVert->m_BoneWeights.numbones - 1))
+									if (n > 0 && n < 3)
 									{
-										if (n > 0 && n < 3)
-										{
-											newHwVert.m_BonesPacked.bones[1] = boneMap.find(pVvdVert->m_BoneWeights.bone[n])->second;
-										}
-										else if (n > 2)
-										{
-											const vvw::mstudioboneweightextra_t* const pVvwWeight = pVVW->GetWeightData(pVvdVert->m_BoneWeights.weightextra.extraweightindex + (n - 3)); // subtract three to get the real idx
-
-											newHwVert.m_BonesPacked.bones[1] = boneMap.find(pVvwWeight->bone)->second; // change this to the bone remap
-										}
+										newHwVert.m_BonesPacked.bones[1] = boneMap.find(pVvdVert->m_BoneWeights.bone[n])->second;
 									}
-									else
+									else if (n > 2)
 									{
-										if (n > 0 && n < 3) // we have to "build" this external weight so we do funny thing
-										{
-											vvw::mstudioboneweightextra_t newHwExtraWeight{};
+										const vvw::mstudioboneweightextra_t* const pVvwWeight = pVVW->GetWeightData(pVvdVert->m_BoneWeights.weightextra.extraweightindex + (n - 3));
 
-											newHwExtraWeight.weight = pVvdVert->m_BoneWeights.weightextra.weight[n];
-											newHwExtraWeight.bone = boneMap.find(pVvdVert->m_BoneWeights.bone[n])->second;
-
-											extraBoneWeights.push_back(newHwExtraWeight);
-
-											newHwMesh.extraBoneWeightSize++;
-										}
-										else if (n > 2)
-										{
-											const vvw::mstudioboneweightextra_t* const pVvwWeight = pVVW->GetWeightData(pVvdVert->m_BoneWeights.weightextra.extraweightindex + (n - 3));
-
-											vvw::mstudioboneweightextra_t newHwExtraWeight{};
-
-											newHwExtraWeight.weight = pVvwWeight->weight;
-											newHwExtraWeight.bone = boneMap.find(pVvwWeight->bone)->second; // change this to the bone remap
-
-											extraBoneWeights.push_back(newHwExtraWeight);
-
-											newHwMesh.extraBoneWeightSize++;
-										}
+										newHwVert.m_BonesPacked.bones[1] = boneMap.find(pVvwWeight->bone)->second;
 									}
 								}
-
-								// first slot is fixed, 2nd bone id will always be the last weight, with the weight value dropped
-								newHwVert.m_WeightsPacked.weight[0] = (pVvdVert->m_BoneWeights.weightextra.weight[0]);
-								newHwVert.m_BonesPacked.bones[0] = boneMap.find(pVvdVert->m_BoneWeights.bone[0])->second;
-
-								newHwVert.m_BonesPacked.numbones = (pVvdVert->m_BoneWeights.numbones - 1);
-							}
-							else
-							{
-								// "simple" weights
-								// use vvd bone count instead of previously set as it should never be funky
-								for (int n = 0; n < pVvdVert->m_BoneWeights.numbones; n++)
+								else if (n > 0 && n < 3)
 								{
-									// don't set weight for third because it gets dropped
-									// third weight is gotten by subtracting the weights that were not dropped from 1.0f
-									if (n < 2)
-									{
-										newHwVert.m_WeightsPacked.weight[n] = (pVvdVert->m_BoneWeights.weight[n] * 32767.0); // "pack" float into short, weight will always be <= 1.0f
-									}
+									vvw::mstudioboneweightextra_t newHwExtraWeight{};
 
-									newHwVert.m_BonesPacked.bones[n] = boneMap.find(pVvdVert->m_BoneWeights.bone[n])->second;
+									newHwExtraWeight.weight = packedWeight(n);
+									newHwExtraWeight.bone = boneMap.find(pVvdVert->m_BoneWeights.bone[n])->second;
+
+									extraBoneWeights.push_back(newHwExtraWeight);
+
+									newHwMesh.extraBoneWeightSize++;
 								}
+								else if (n > 2)
+								{
+									const vvw::mstudioboneweightextra_t* const pVvwWeight = pVVW->GetWeightData(pVvdVert->m_BoneWeights.weightextra.extraweightindex + (n - 3));
 
-								newHwVert.m_BonesPacked.numbones = (pVvdVert->m_BoneWeights.numbones - 1);
+									vvw::mstudioboneweightextra_t newHwExtraWeight{};
+
+									newHwExtraWeight.weight = pVvwWeight->weight;
+									newHwExtraWeight.bone = boneMap.find(pVvwWeight->bone)->second;
+
+									extraBoneWeights.push_back(newHwExtraWeight);
+
+									newHwMesh.extraBoneWeightSize++;
+								}
 							}
+
+							newHwVert.m_WeightsPacked.weight[0] = packedWeight(0);
+							newHwVert.m_BonesPacked.bones[0] = boneMap.find(pVvdVert->m_BoneWeights.bone[0])->second;
+							if (pVvdVert->m_BoneWeights.numbones == 1)
+								newHwVert.m_BonesPacked.bones[1] = newHwVert.m_BonesPacked.bones[0];
+
+							newHwVert.m_BonesPacked.numbones = (pVvdVert->m_BoneWeights.numbones - 1);
 
 							legacyBoneWeights.push_back(pVvdVert->m_BoneWeights);
 							newHwMesh.legacyWeightCount++;

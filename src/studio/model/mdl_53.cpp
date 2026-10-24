@@ -15,6 +15,28 @@ bool g_mdl53StripSkinnedBvh = false;
 // skinned (sknp) material variants, otherwise the rigid (rgdp) ones.
 bool g_mdl53Skinned = false;
 extern bool g_enableAutoGenBVH;
+extern std::string g_materialPrefix;
+extern std::vector<std::string> g_materialPrefixSkip;
+extern std::string g_modelPrefix;
+
+// A port that keeps its own art under a namespace (-materialprefix tf1/) renames every
+// material it references, except engine-function paths S21 resolves itself (-materialprefixskip).
+static const char* PrefixedMaterialName(const char* name)
+{
+	if (g_materialPrefix.empty())
+		return name;
+	std::string n(name);
+	std::string lower(n);
+	for (char& c : lower)
+		c = (c == '\\') ? '/' : (char)tolower((unsigned char)c);
+	for (const std::string& skip : g_materialPrefixSkip)
+		if (lower.rfind(skip, 0) == 0)
+			return name;
+	// The string table keeps the pointer until the model is written.
+	static std::list<std::string> s_names;
+	s_names.push_back(g_materialPrefix + n);
+	return s_names.back().c_str();
+}
 
 //
 // ConvertStudioHdr
@@ -457,6 +479,7 @@ void ConvertTextures_53(mstudiotexturedir_t* pCDTextures, int numCDTextures, r2:
 		r5::v8::mstudiotexture_t* newTexture = reinterpret_cast<r5::v8::mstudiotexture_t*>(g_model.pData);
 
 		const char* textureName = STRING_FROM_IDX(oldTexture, oldTexture->sznameindex);
+		textureName = PrefixedMaterialName(textureName);
 		AddToStringTable((char*)newTexture, &newTexture->sznameindex, textureName);
 
 		std::string texName = "material/" + std::string(textureName) + ".rpak";
@@ -688,8 +711,11 @@ void ConvertMDL53To54(char* pMDL, const std::string& pathIn, const std::string& 
 
 	std::string modelName = originalModelName;
 
-	if (modelName.rfind("mdl/", 0) != 0)
-		modelName = "mdl/" + modelName;
+	if (modelName.rfind("mdl/", 0) == 0)
+		modelName = modelName.substr(4);
+	if (!g_modelPrefix.empty() && modelName.rfind(g_modelPrefix, 0) != 0)
+		modelName = g_modelPrefix + modelName;
+	modelName = "mdl/" + modelName;
 	if (EndsWith(modelName, ".mdl"))
 	{
 		modelName = modelName.substr(0, modelName.length() - 4);
@@ -1218,6 +1244,8 @@ void ConvertMDL53To54(char* pMDL, const std::string& pathIn, const std::string& 
 	// TODO[rexx]: this ought to be moved to a separate function when possible
 
 	std::string rigName = originalModelName;
+	if (!g_modelPrefix.empty() && rigName.rfind("animrig/", 0) != 0 && rigName.rfind(g_modelPrefix, 0) != 0)
+		rigName = g_modelPrefix + rigName;
 	if (rigName.rfind("animrig/", 0) != 0)
 		rigName = "animrig/" + rigName;
 	if (EndsWith(rigName, ".mdl"))
